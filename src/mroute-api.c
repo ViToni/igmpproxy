@@ -46,7 +46,7 @@
      
 // need an IGMP socket as interface for the mrouted API
 // - receives the IGMP messages
-int         MRouterFD;        /* socket for all network I/O  */
+int         MRouterFD = -1;      /* socket for all network I/O  */
 char        *recv_buf;           /* input packet buffer         */
 char        *send_buf;           /* output packet buffer        */
 
@@ -87,11 +87,11 @@ void disableMRouter(void)
     if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_DONE, NULL, 0 ) 
          || close( MRouterFD )
        ) {
-        MRouterFD = 0;
+        MRouterFD = -1;
         my_log( LOG_ERR, errno, "MRT_DONE/close" );
     }
 
-    MRouterFD = 0;
+    MRouterFD = -1;
 }
 
 /*
