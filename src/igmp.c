@@ -121,13 +121,30 @@ void acceptIgmp(int recvlen) {
     src       = ip->ip_src.s_addr;
     dst       = ip->ip_dst.s_addr;
 
-    /* filter local multicast 239.255.255.250 */
-    if (dst == htonl(0xEFFFFFFA)) {
-        my_log(LOG_NOTICE, 0, "The IGMP message was local multicast. Ignoring.");
+    /* filter local multicast */
+    if (dst >= htonl(0xEFFFFFFA) && dst <= htonl(0xEFFFFFFF))
+    {
+        my_log(LOG_DEBUG, 0, "The IGMP message was local multicast. Ignoring.");
+        return;
+    }
+    if (dst >= htonl(0xE9E9E9E9))
+    {
+        my_log(LOG_DEBUG, 0, "The IGMP message was local multicast. Ignoring.");
         return;
     }
 
-    /* 
+    if (dst >= htonl(0xE0FFFFFA) && dst <= htonl(0xE0FFFFFF))
+    {
+        my_log(LOG_DEBUG, 0, "The IGMP message was local multicast. Ignoring.");
+        return;
+    }
+    if (dst == htonl(0xE0000016))
+    {
+        my_log(LOG_DEBUG, 0, "The IGMP message was local multicast. Ignoring.");
+        return;
+    }
+
+    /*
      * this is most likely a message from the kernel indicating that
      * a new src grp pair message has arrived and so, it would be 
      * necessary to install a route into the kernel for this.
