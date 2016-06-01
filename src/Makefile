@@ -1,12 +1,12 @@
 
 #BINDIR=../bin
 BINDIR=/usr/local/bin
-ETCDIR=/etc
-MANDIR=/usr/share/man
+ETCDIR=/usr/local/etc
+MANDIR=/usr/local/man
 
 
 # CFLAGS=-g
-CFLAGS=-O
+CFLAGS+=-O2 -Wall -Wextra -fno-builtin-log
 
 default : build.h igmpproxy
 
@@ -21,8 +21,11 @@ install :
 	cp ../doc/igmpproxy.conf.5 ${MANDIR}/man5
 	if [ ! -e ${ETCDIR}/igmpproxy.conf ]; then cp igmpproxy.conf ${ETCDIR}; fi
 
-igmpproxy : igmpproxy.o config.o confread.o request.o udpsock.o mcgroup.o rttable.o \
-			igmp.o ifvc.o callout.o kern.o syslog.o lib.o mroute-api.o
+SRC = igmpproxy.c config.c confread.c request.c mcgroup.c rttable.c \
+			igmp.c ifvc.c callout.c kern.c syslog.c lib.c mroute-api.c
+OBJS = ${SRC:.c=.o}
+igmpproxy: build.h ${OBJS}
+	cc ${CFLAGS} ${OBJS} -o igmpproxy
 
 build.h	:  
 	echo '#define BUILD "' `date +%y%m%d` '"' >build.h

@@ -32,7 +32,11 @@
 */
 
 #include "defs.h"
+#ifdef __FreeBSD__
+#include <ifaddrs.h>
+#else
 #include <linux/sockios.h>
+#endif
 
 struct IfDesc IfDescVc[ MAX_IF ], *IfDescEp = IfDescVc;
 
@@ -42,76 +46,44 @@ struct IfDesc IfDescVc[ MAX_IF ], *IfDescEp = IfDescVc;
 **          
 */
 void buildIfVc() {
-    struct ifreq IfVc[ sizeof( IfDescVc ) / sizeof( IfDescVc[ 0 ] )  ];
-    struct ifreq *IfEp;
+    struct ifaddrs *ifap, *ifa;
+    struct IfDesc *ifp;
+    struct SubnetList *net;
 
-    int Sock;
-
-    if ( (Sock = socket( AF_INET, SOCK_DGRAM, 0 )) < 0 )
-        log( LOG_ERR, errno, "RAW socket open" );
-
-    /* get If vector
-     */
-    {
-        struct ifconf IoCtlReq;
-
-        IoCtlReq.ifc_buf = (void *)IfVc;
-        IoCtlReq.ifc_len = sizeof( IfVc );
-
-        if ( ioctl( Sock, SIOCGIFCONF, &IoCtlReq ) < 0 )
-            log( LOG_ERR, errno, "ioctl SIOCGIFCONF" );
-
-        IfEp = (void *)((char *)IfVc + IoCtlReq.ifc_len);
-    }
+    if (getifaddrs(&ifap) < 0)
+       log( LOG_ERR, errno, "getifaddrs" );
 
     /* loop over interfaces and copy interface info to IfDescVc
      */
     {
-        struct ifreq  *IfPt;
-        struct IfDesc *IfDp;
-
         // Temp keepers of interface params...
         uint32 addr, subnet, mask;
 
-        for ( IfPt = IfVc; IfPt < IfEp; IfPt++ ) {
-            struct ifreq IfReq;
+        for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
             char FmtBu[ 32 ];
 
-            strncpy( IfDescEp->Name, IfPt->ifr_name, sizeof( IfDescEp->Name ) );
-
-            // Currently don't set any allowed nets...
-            //IfDescEp->allowednets = NULL;
-
-            // Set the index to -1 by default.
-            IfDescEp->index = -1;
-
-            /* don't retrieve more info for non-IP interfaces
-             */
-            if ( IfPt->ifr_addr.sa_family != AF_INET ) {
-                IfDescEp->InAdr.s_addr = 0;  /* mark as non-IP interface */
-                IfDescEp++;
+           if (IfDescEp >= &IfDescVc[ MAX_IF ]) {
+               log(LOG_WARNING, 0, "Too many interfaces, skipping %d", ifa->ifa_name);
                 continue;
             }
 
-            // Get the interface adress...
-            IfDescEp->InAdr = ((struct sockaddr_in *)&IfPt->ifr_addr)->sin_addr;
-            addr = IfDescEp->InAdr.s_addr;
+            /* ignore non-IP interfaces
+             */
+            if ( ifa->ifa_addr->sa_family != AF_INET )
+                continue;
 
-            memcpy( IfReq.ifr_name, IfDescEp->Name, sizeof( IfReq.ifr_name ) );
+           if ((ifp = getIfByName(ifa->ifa_name)) == NULL) {
 
-            // Get the subnet mask...
-            if (ioctl(Sock, SIOCGIFNETMASK, &IfReq ) < 0)
-                log(LOG_ERR, errno, "ioctl SIOCGIFNETMASK for %s", IfReq.ifr_name);
-            mask = ((struct sockaddr_in *)&IfReq.ifr_addr)->sin_addr.s_addr;
-            subnet = addr & mask;
+               strlcpy( IfDescEp->Name, ifa->ifa_name, sizeof( IfDescEp->Name ) );
 
-            // Get the physical index of the Interface
-            if (ioctl(Sock, SIOCGIFINDEX, &IfReq ) < 0)
-                log(LOG_ERR, errno, "ioctl SIOCGIFINDEX for %s", IfReq.ifr_name);
+               log(LOG_DEBUG, 0, "Adding Physical Index value of IF '%s' is %d",
+                   IfDescEp->Name, if_nametoindex(IfDescEp->Name));
             
-            log(LOG_DEBUG, 0, "Physical Index value of IF '%s' is %d",
-                IfDescEp->Name, IfReq.ifr_ifindex);
+               // Set the index to -1 by default.
+               IfDescEp->index = -1;
 
+               // Get the interface adress...
+               IfDescEp->InAdr = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
 
             /* get if flags
             **
@@ -122,39 +94,43 @@ void buildIfVc() {
             ** grex  0x00C1 -> NoArp, Running, Up
             ** ipipx 0x00C1 -> NoArp, Running, Up
             */
-            if ( ioctl( Sock, SIOCGIFFLAGS, &IfReq ) < 0 )
-                log( LOG_ERR, errno, "ioctl SIOCGIFFLAGS" );
 
-            IfDescEp->Flags = IfReq.ifr_flags;
-
-            // Insert the verified subnet as an allowed net...
-            IfDescEp->allowednets = (struct SubnetList *)malloc(sizeof(struct SubnetList));
-            if(IfDescEp->allowednets == NULL) log(LOG_ERR, 0, "Out of memory !");
-            
-            // Create the network address for the IF..
-            IfDescEp->allowednets->next = NULL;
-            IfDescEp->allowednets->subnet_mask = mask;
-            IfDescEp->allowednets->subnet_addr = subnet;
+               IfDescEp->Flags = ifa->ifa_flags;
 
             // Set the default params for the IF...
             IfDescEp->state         = IF_STATE_DOWNSTREAM;
             IfDescEp->robustness    = DEFAULT_ROBUSTNESS;
             IfDescEp->threshold     = DEFAULT_THRESHOLD;   /* ttl limit */
             IfDescEp->ratelimit     = DEFAULT_RATELIMIT; 
+               IfDescEp->allowednets   = NULL;
+               ifp = IfDescEp++;
+           }
+
+            // Insert the verified subnet as an allowed net...
+            addr = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
+            mask = ((struct sockaddr_in *)ifa->ifa_netmask)->sin_addr.s_addr;
+            subnet = addr & mask;
             
+            net = (struct SubnetList *)malloc(sizeof(struct SubnetList));
+            if(net == NULL) log(LOG_ERR, 0, "Out of memory !");
+            
+            // Create the network address for the IF..
+            net->next = ifp->allowednets;
+            net->subnet_mask = mask;
+            net->subnet_addr = subnet;
+            ifp->allowednets = net;
 
             // Debug log the result...
             IF_DEBUG log( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, Network: %s",
-                 IfDescEp->Name,
-                 fmtInAdr( FmtBu, IfDescEp->InAdr ),
-                 IfDescEp->Flags,
+                 ifp->Name,
+                 fmtInAdr( FmtBu, ifp->InAdr ),
+                 ifp->Flags,
                  inetFmts(subnet,mask, s1));
 
-            IfDescEp++;
-        } 
     }
 
-    close( Sock );
+    }
+    freeifaddrs(ifap);
 }
 
 /*

@@ -80,7 +80,7 @@ int         upStreamVif;
 *   on commandline. The number of commandline arguments, and a
 *   pointer to the arguments are recieved on the line...
 */    
-int main( int ArgCn, const char *ArgVc[] ) {
+int main( int ArgCn, char *ArgVc[] ) {
 
     int debugMode = 0;
 
@@ -155,18 +155,9 @@ int main( int ArgCn, const char *ArgVc[] ) {
         if ( ! debugMode ) {
     
             IF_DEBUG log( LOG_DEBUG, 0, "Starting daemon mode.");
-    
-            // Only daemon goes past this line...
-            if (fork()) exit(0);
-    
-            // Detach deamon from terminal
-            if ( close( 0 ) < 0 || close( 1 ) < 0 || close( 2 ) < 0 
-                 || open( "/dev/null", 0 ) != 0 || dup2( 0, 1 ) < 0 || dup2( 0, 2 ) < 0
-                 || setpgrp() < 0
-               ) {
+           if (daemon(1, 0) != 0)
                 log( LOG_ERR, errno, "failed to detach deamon" );
             }
-        }
         
         // Go to the main loop.
         igmpProxyRun();
@@ -218,7 +209,7 @@ int igmpProxyInit() {
         int     vifcount = 0;
         upStreamVif = -1;
 
-        for ( Ix = 0; Dp = getIfByIx( Ix ); Ix++ ) {
+        for ( Ix = 0; (Dp = getIfByIx( Ix )); Ix++ ) {
 
             if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
                 if(Dp->state == IF_STATE_UPSTREAM) {
@@ -237,7 +228,7 @@ int igmpProxyInit() {
 
         // If there is only one VIF, or no defined upstream VIF, we send an error.
         if(vifcount < 2 || upStreamVif < 0) {
-            log(LOG_ERR, 0, "There must be at least 2 Vif's where one is upstream.");
+            log(LOG_ERR, 0, "There must be at least 2 Vif's where one is upstream. (vifcount %d, upStreamVif %d)", vifcount, upStreamVif);
         }
     }  
     
@@ -275,7 +266,7 @@ void igmpProxyRun() {
     register int recvlen;
     int     MaxFD, Rt, secs;
     fd_set  ReadFDS;
-    int     dummy = 0;
+    socklen_t  dummy = 0;
     struct  timeval  curtime, lasttime, difftime, tv; 
     // The timeout is a pointer in order to set it to NULL if nessecary.
     struct  timeval  *timeout = &tv;
@@ -324,12 +315,12 @@ void igmpProxyRun() {
             continue;
         }
         else if( Rt > 0 ) {
-
             // Read IGMP request, and handle it...
             if( FD_ISSET( MRouterFD, &ReadFDS ) ) {
     
                 recvlen = recvfrom(MRouterFD, recv_buf, RECV_BUF_SIZE,
                                    0, NULL, &dummy);
+
                 if (recvlen < 0) {
                     if (errno != EINTR) log(LOG_ERR, errno, "recvfrom");
                     continue;

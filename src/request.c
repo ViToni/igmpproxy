@@ -53,7 +53,7 @@ typedef struct {
 *   Handles incoming membership reports, and
 *   appends them to the routing table.
 */
-void acceptGroupReport(uint32 src, uint32 group, uint8 type) {
+void acceptGroupReport(uint32 src, uint32 group) {
     struct IfDesc  *sourceVif;
 
     // Sanitycheck the group adress...
@@ -88,10 +88,11 @@ void acceptGroupReport(uint32 src, uint32 group, uint8 type) {
 
     } else {
         // Log the state of the interface the report was recieved on.
-        log(LOG_INFO, 0, "Mebership report was recieved on %s. Ignoring.",
+        log(LOG_INFO, 0, "Membership report was received on %s. Ignoring.",
             sourceVif->state==IF_STATE_UPSTREAM?"the upstream interface":"a disabled interface");
     }
 
+//    log(LOG_DEBUG, 0, "Eliminate compiler warning for field type = %u", type);
 }
 
 /**
@@ -136,7 +137,7 @@ void acceptLeaveMessage(uint32 src, uint32 group) {
 
     } else {
         // just ignore the leave request...
-        IF_DEBUG log(LOG_DEBUG, 0, "The found if for %s was not downstream. Ignoring leave request.");
+        IF_DEBUG log(LOG_DEBUG, 0, "The found if for %s was not downstream. Ignoring leave request.",  inetFmt(src, s1));
     }
 }
 
@@ -169,6 +170,16 @@ void sendGroupSpecificMemberQuery(void *argument) {
         inetFmt(gvDesc->vifAddr,s1), inetFmt(gvDesc->group,s2),
         conf->lastMemberQueryInterval);
 
+    // Send a group specific V3 membership query...
+    sendIgmp(gvDesc->vifAddr, allhosts_group, 
+             IGMP_V3_MEMBERSHIP_QUERY,
+             conf->lastMemberQueryInterval * IGMP_TIMER_SCALE, 
+             gvDesc->group, 0);
+
+    IF_DEBUG log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d",
+        inetFmt(gvDesc->vifAddr,s1), inetFmt(allhosts_group,s2),
+        conf->lastMemberQueryInterval);
+
     // Set timeout for next round...
     timer_setTimer(conf->lastMemberQueryInterval, sendGroupSpecificMemberQuery, gvDesc);
 
@@ -184,7 +195,7 @@ void sendGeneralMembershipQuery() {
     int             Ix;
 
     // Loop through all downstream vifs...
-    for ( Ix = 0; Dp = getIfByIx( Ix ); Ix++ ) {
+    for ( Ix = 0; (Dp = getIfByIx( Ix )); Ix++ ) {
         if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
             if(Dp->state == IF_STATE_DOWNSTREAM) {
                 // Send the membership query...
@@ -192,9 +203,18 @@ void sendGeneralMembershipQuery() {
                          IGMP_MEMBERSHIP_QUERY,
                          conf->queryResponseInterval * IGMP_TIMER_SCALE, 0, 0);
                 
-                IF_DEBUG log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d",
+                IF_DEBUG log(LOG_DEBUG, 0, "Sent V2 membership query from %s to %s. Delay: %d",
                     inetFmt(Dp->InAdr.s_addr,s1), inetFmt(allhosts_group,s2),
                     conf->queryResponseInterval);
+
+                sendIgmp(Dp->InAdr.s_addr, allhosts_group, 
+                         IGMP_V3_MEMBERSHIP_QUERY,
+                         conf->queryResponseInterval * IGMP_TIMER_SCALE, v3_genqry_group, 0);
+                
+                IF_DEBUG log(LOG_DEBUG, 0, "Sent V3 membership query from %s to %s. Delay: %d",
+                    inetFmt(Dp->InAdr.s_addr,s1), inetFmt(allhosts_group,s2),
+                    conf->queryResponseInterval);
+
             }
         }
     }

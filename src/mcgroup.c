@@ -44,16 +44,15 @@
 static int joinleave( int Cmd, int UdpSock, struct IfDesc *IfDp, uint32 mcastaddr ) {
     struct ip_mreq CtlReq;
     const char *CmdSt = Cmd == 'j' ? "join" : "leave";
-    
+
     CtlReq.imr_multiaddr.s_addr = mcastaddr;
     CtlReq.imr_interface.s_addr = IfDp->InAdr.s_addr;
     
     {
-        char FmtBu[ 32 ];
         log( LOG_NOTICE, 0, "%sMcGroup: %s on %s", CmdSt, 
             inetFmt( mcastaddr, s1 ), IfDp ? IfDp->Name : "<any>" );
     }
-    
+#if __FreeBSD_version < 800000
     if( setsockopt( UdpSock, IPPROTO_IP, 
           Cmd == 'j' ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, 
           (void *)&CtlReq, sizeof( CtlReq ) ) ) 
@@ -61,6 +60,23 @@ static int joinleave( int Cmd, int UdpSock, struct IfDesc *IfDp, uint32 mcastadd
         log( LOG_WARNING, errno, "MRT_%s_MEMBERSHIP failed", Cmd == 'j' ? "ADD" : "DROP" );
         return 1;
     }
+#else
+    if( setsockopt( UdpSock, IPPROTO_IP,
+          Cmd == 'j' ? IP_ADD_SOURCE_MEMBERSHIP : IP_DROP_SOURCE_MEMBERSHIP,
+          (void *)&CtlReq, sizeof( CtlReq ) ) )
+    {
+        log( LOG_WARNING, errno, "MRT_%s_MEMBERSHIP failed", Cmd == 'j' ? "ADD" : "DROP" );
+        return 1;
+    }
+#endif
+    /* setsockopt() causes IGMP_V2_MEMBERSHIPT_REPORT sent out of Upstream interface */
+    /* Send IGMP packet on upstream interface */
+    if( Cmd == 'j' ){
+        sendIgmp(IfDp->InAdr.s_addr, mcastaddr, IGMP_V3_MEMBERSHIP_REPORT, 0, mcastaddr, 0);
+    }
+    else
+        sendIgmp(IfDp->InAdr.s_addr, mcastaddr, IGMP_V2_LEAVE_GROUP, 0, mcastaddr, 0);
+        /* V3 leave will be sent inside sendIgmp() */
     
     return 0;
 }

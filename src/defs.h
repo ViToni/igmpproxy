@@ -40,10 +40,18 @@
 #include <stdlib.h>
 #include <syslog.h>
 #include <signal.h>
-
 #include <sys/socket.h>
+
+#ifdef __FreeBSD__
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+
+#else
 #include <sys/un.h>
 #include <sys/time.h>
+#endif
 
 #include <net/if.h>
 
@@ -52,7 +60,15 @@
     #include <linux/in.h>
     #include <linux/mroute.h>
 #else
+#ifdef __FreeBSD__
+    #include <alias.h>
+    #include <net/route.h>
     #include <netinet/in.h>
+    #include <netinet/ip_mroute.h>
+    #include <netinet/igmp.h>
+#endif
+    #include <netinet/in.h>
+    #include <netinet/in_systm.h>
     #include <netinet/ip.h>
     #include <netinet/igmp.h>
     #include <arpa/inet.h>
@@ -60,7 +76,11 @@
 
 
 // The default path for the config file...
+#ifdef __FreeBSD__
+#define     IGMPPROXY_CONFIG_FILEPATH     "/usr/local/etc/igmpproxy.conf"
+#else
 #define     IGMPPROXY_CONFIG_FILEPATH     "/etc/igmpproxy.conf"
+#endif
 #define     ENABLE_DEBUG    1
 
 /*
@@ -69,12 +89,46 @@
 #define MAX_IP_PACKET_LEN	576
 #define MIN_IP_HEADER_LEN	20
 #define MAX_IP_HEADER_LEN	60
+#define HAVE_SA_LEN		1
+#define IP_HEADER_RAOPT_LEN	24
 
 #define MAX_MC_VIFS    32     // !!! check this const in the specific includes
 
+#ifndef IGMP_MEMBERSHIP_QUERY
+#define IGMP_MEMBERSHIP_QUERY IGMP_HOST_MEMBERSHIP_QUERY
+#endif
+
+#define IGMP_V3_MEMBERSHIP_QUERY 0x111 /* it's fake but we have to differentiate between V2 and V3 queries */
+#define IGMP_V3_QUERY_HDRLEN   4
+
+#ifndef IGMP_V1_MEMBERSHIP_REPORT
+#define IGMP_V1_MEMBERSHIP_REPORT IGMP_v1_HOST_MEMBERSHIP_REPORT
+#endif
+#ifndef IGMP_V2_MEMBERSHIP_REPORT
+#define IGMP_V2_MEMBERSHIP_REPORT IGMP_v2_HOST_MEMBERSHIP_REPORT
+#endif
+#ifndef IGMP_V3_MEMBERSHIP_REPORT
+#define IGMP_V3_MEMBERSHIP_REPORT IGMP_v3_HOST_MEMBERSHIP_REPORT
+#endif
+#ifndef IGMP_V2_LEAVE_GROUP
+#define IGMP_V2_LEAVE_GROUP IGMP_HOST_LEAVE_MESSAGE
+#endif
+
+
+#ifndef INADDR_ALLRTRS_GROUP
+/* address for multicast mtrace msg */
+#define INADDR_ALLRTRS_GROUP    (u_int32_t)0xe0000002   /* 224.0.0.2 */
+#endif
+#define INADDR_ALLRTRS_GROUP_V3     (u_int32_t)0xe0000016   /* 224.0.0.22 */
+#define INADDR_V3_GENQRY_GROUP      (u_int32_t)0x00000000   /* 0.0.0.0 */
+
 // Useful macros..          
+#ifndef MIN
 #define MIN( a, b ) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef MAX
 #define MAX( a, b ) ((a) < (b) ? (b) : (a))
+#endif
 #define VCMC( Vc )  (sizeof( Vc ) / sizeof( (Vc)[ 0 ] ))
 #define VCEP( Vc )  (&(Vc)[ VCMC( Vc ) ])
 
@@ -126,7 +180,12 @@ extern char LogLastMsg[ 128 ];    // last logged message
 
 #define	    IF_DEBUG	if(Log2Stderr & LOG_DEBUG)
 
-void log( int Serverity, int Errno, const char *FmtSt, ... );
+#ifdef DEVEL_LOGGING
+#define log(Severity, Errno, Fmt, args...)     _log((Severity), (Errno), __FUNCTION__, __LINE__, (Fmt), ##args)
+void _log( int Serverity, int Errno, const char *func, int line, const char *FmtSt, ...);
+#else
+void log( int Serverity, int Errno, const char *FmtSt, ...);
+#endif
 
 /* ifvc.c
  */
@@ -196,6 +255,7 @@ void buildIfVc( void );
 struct IfDesc *getIfByName( const char *IfName );
 struct IfDesc *getIfByIx( unsigned Ix );
 struct IfDesc *getIfByAddress( uint32 Ix );
+int isAdressValidForIf( struct IfDesc* intrface, uint32 ipaddr );
 
 /* mroute-api.c
  */
@@ -226,6 +286,9 @@ struct Config *getCommonConfig();
 */
 extern uint32 allhosts_group;
 extern uint32 allrouters_group;
+extern uint32 allrouters_group_v3;
+extern uint32 v3_genqry_allsystems;
+extern uint32 v3_genqry_group;
 void initIgmp(void);
 void acceptIgmp(int);
 void sendIgmp (uint32, uint32, int, int, uint32,int);
@@ -235,7 +298,7 @@ void sendIgmp (uint32, uint32, int, int, uint32,int);
 char   *fmtInAdr( char *St, struct in_addr InAdr );
 char   *inetFmt(uint32 addr, char *s);
 char   *inetFmts(uint32 addr, uint32 mask, char *s);
-int     inetCksum(u_short *addr, u_int len);
+int     inetChksum(u_short *addr, u_int len);
 
 /* kern.c
  */
@@ -255,7 +318,7 @@ int openUdpSocket( uint32 PeerInAdr, uint16 PeerPort );
 
 /* mcgroup.c
  */
-int joinMcGroup( int UdpSock, struct IfDesc *IfDp, uint32 mcastaddr );
+int joinMcGroup( int UdpSock, struct IfDesc *IfDp, uint32 mcastaddr);
 int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32 mcastaddr );
 
 
@@ -264,14 +327,14 @@ int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32 mcastaddr );
 void initRouteTable();
 void clearAllRoutes();
 int insertRoute(uint32 group, int ifx);
-int activateRoute(uint32 group, uint32 originAddr);
+int activateRoute(uint32 group, uint32 originAddr, int downIf);
 void ageActiveRoutes();
 void setRouteLastMemberMode(uint32 group);
 int lastMemberGroupAge(uint32 group);
 
 /* request.c
  */
-void acceptGroupReport(uint32 src, uint32 group, uint8 type);
+void acceptGroupReport(uint32 src, uint32 group);
 void acceptLeaveMessage(uint32 src, uint32 group);
 void sendGeneralMembershipQuery();
 

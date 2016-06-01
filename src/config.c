@@ -177,7 +177,7 @@ void configureVifs() {
     }
 
     // Loop through all VIFs...
-    for ( Ix = 0; Dp = getIfByIx( Ix ); Ix++ ) {
+    for ( Ix = 0; (Dp = getIfByIx( Ix )); Ix++ ) {
         if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
 
             // Now try to find a matching config...
@@ -241,7 +241,8 @@ struct vifconfig *parsePhyintToken() {
     tmpPtr->allowednets = NULL;
 
     // Make a copy of the token to store the IF name
-    tmpPtr->name = (char *)malloc( sizeof(char) * strlen(token) );
+    //One more byte since strlen does not include the terminating NULL char.
+    tmpPtr->name = (char *)malloc( (sizeof(char) * strlen(token)) + 1 );
     if(tmpPtr->name == NULL) {
         log(LOG_ERR, 0, "Out of memory.");
     }
@@ -255,7 +256,7 @@ struct vifconfig *parsePhyintToken() {
     while(token != NULL) {
         if(strcmp("altnet", token)==0) {
             // Altnet...
-            struct in_addr  networkAddr;
+            //struct in_addr  networkAddr;
 
             token = nextConfigToken();
             IF_DEBUG log(LOG_DEBUG, 0, "Config: IF: Got altnet token %s.",token);
@@ -347,7 +348,7 @@ struct SubnetList *parseSubnetAddress(char *addrstr) {
         mask <<= (32 - bitcnt);
     }
 
-    if(addr == -1 || addr == 0) {
+    if(addr == (uint32) -1 || addr == 0) {
         log(LOG_WARNING, 0, "Unable to parse address token '%s'.", addrstr);
         return NULL;
     }

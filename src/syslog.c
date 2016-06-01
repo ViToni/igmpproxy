@@ -53,12 +53,16 @@ char LogLastMsg[ 128 ];
 ** is logged to 'stderr'.
 **          
 */
+#ifdef DEVEL_LOGGING
+void _log( int Serverity, int Errno, const char *func, int line, const char *FmtSt, ... )
+#else
 void log( int Serverity, int Errno, const char *FmtSt, ... )
+#endif
 {
   const char ServVc[][ 5 ] = { "EMER", "ALER", "CRIT", "ERRO", 
 			       "Warn", "Note", "Info", "Debu" };
 
-  const char *ServPt = Serverity < 0 || Serverity >= VCMC( ServVc ) ? 
+  const char *ServPt = Serverity < 0 || Serverity >= (int) VCMC( ServVc ) ? 
                        "!unknown serverity!" : ServVc[ Serverity ];
  
   const char *ErrSt = (Errno <= 0) ? NULL : (const char *)strerror( Errno ); 
@@ -69,6 +73,9 @@ void log( int Serverity, int Errno, const char *FmtSt, ... )
 
     va_start( ArgPt, FmtSt );
     Ln  = snprintf( LogLastMsg, sizeof( LogLastMsg ), "%s: ", ServPt );
+#ifdef DEVEL_LOGGING
+    Ln += snprintf( LogLastMsg + Ln, sizeof( LogLastMsg ) - Ln, "%s():%d: ", func, line);
+#endif    
     Ln += vsnprintf( LogLastMsg + Ln, sizeof( LogLastMsg ) - Ln, FmtSt, ArgPt );
     if( ErrSt )
       snprintf( LogLastMsg + Ln, sizeof( LogLastMsg ) - Ln, "; Errno(%d): %s", Errno, ErrSt );
