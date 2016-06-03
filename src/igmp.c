@@ -125,7 +125,7 @@ void acceptIgmp(int recvlen) {
     if ((dst >= htonl(0xEFFFFFFA) && dst <= htonl(0xEFFFFFFF)) || (dst >= htonl(0xE0FFFFFA) && 
 		dst <= htonl(0xE0FFFFFF)) || (dst >= htonl(0xE9E9E9E9)) || (dst == htonl(0xE0000016)))
     {
-        my_log(LOG_DEBUG, 0, "The IGMP message was local multicast. Ignoring.");
+       /* my_log(LOG_DEBUG, 0, "The IGMP message was local multicast. Ignoring."); */
         return;
     }
     
