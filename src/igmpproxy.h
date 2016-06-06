@@ -99,7 +99,6 @@ extern char     s3[];
 extern char     s4[];
 
 
-
 //#################################################################################
 //  Lib function prototypes.
 //#################################################################################
@@ -108,10 +107,19 @@ extern char     s4[];
  */
 #define LOG_TRACE (LOG_DEBUG+1)
 
-extern bool Log2Stderr;           // Log to stderr instead of to syslog
-extern int  LogLevel;             // Log threshold, LOG_WARNING .... LOG_DEBUG 
 
+extern bool Log2Stderr;           // Log to stderr instead of to syslog
+extern int  LogLevel;             // Log threshold, LOG_WARNING .... LOG_DEBUG, LOG_TRACE 
+
+// uncomment for more details while logging
+//#define DEVEL_LOGGING
+
+#ifdef DEVEL_LOGGING
+#define my_log(Severity, Errno, Fmt, args...)     _my_log((Severity), (Errno), __FUNCTION__, __LINE__, (Fmt), ##args)
+void _my_log( int Serverity, int Errno, const char *func, int line, const char *FmtSt, ...);
+#else
 void my_log( int Serverity, int Errno, const char *FmtSt, ... );
+#endif
 
 /* ifvc.c
  */
