@@ -59,7 +59,8 @@ void my_log( int Severity, int Errno, const char *FmtSt, ... ) {
             strftime(currentTime, 84, "%H:%M:%S", localtime(&curTime.tv_sec));
 
             fprintf(stderr, "%s,%d: %s\n", currentTime, milli, LogMsg);
-        } else {
+        } else if (Severity <= LOG_DEBUG) {
+            // we log only known severity levels to syslog
             syslog(Severity, "%s", LogMsg);
         }
     }
