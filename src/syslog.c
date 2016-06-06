@@ -37,7 +37,19 @@
 int LogLevel = LOG_WARNING;
 bool Log2Stderr = false;
 
-void my_log( int Severity, int Errno, const char *FmtSt, ... ) {
+// Prototypes
+#ifdef DEVEL_LOGGING
+void print_log_prefix ( int Severity, const char *func, int line );
+#else
+void print_log_prefix( int Severity );
+#endif
+
+#ifdef DEVEL_LOGGING
+void _my_log( int Severity, int Errno, const char *func, int line, const char *FmtSt, ... )
+#else
+void my_log( int Severity, int Errno, const char *FmtSt, ... )
+#endif
+{
     char LogMsg[ 128 ];
 
     va_list ArgPt;
@@ -52,13 +64,14 @@ void my_log( int Severity, int Errno, const char *FmtSt, ... ) {
 
     if (Severity <= LogLevel) {
         if (Log2Stderr) {
-            struct timeval curTime;
-            gettimeofday(&curTime,NULL);
-            int milli = curTime.tv_usec / 1000;
-            char currentTime[84] = "";
-            strftime(currentTime, 84, "%H:%M:%S", localtime(&curTime.tv_sec));
 
-            fprintf(stderr, "%s,%d: %s\n", currentTime, milli, LogMsg);
+#ifdef DEVEL_LOGGING
+            print_log_prefix ( Severity, func, line );
+#else
+            print_log_prefix( Severity );
+#endif
+            fprintf(stderr, "%s\n", LogMsg);
+
         } else if (Severity <= LOG_DEBUG) {
             // we log only known severity levels to syslog
             syslog(Severity, "%s", LogMsg);
@@ -68,4 +81,34 @@ void my_log( int Severity, int Errno, const char *FmtSt, ... ) {
     if( Severity <= LOG_ERR ) {
         exit( -1 );
     }
+}
+
+
+#ifdef DEVEL_LOGGING
+void print_log_prefix ( int Severity, const char *func, int line )
+#else
+void print_log_prefix( int Severity )
+#endif
+{
+    const char SeverityVc[][ 6 ] = {
+        "EMERG", "ALERT", "CRITI", "ERROR", 
+        "Warn ", "Notic", "Info ", "Debug", "Trace"
+    };
+
+    const char *SeverityPt = Severity < 0 || Severity >= (int) VCMC( SeverityVc ) ? 
+                       "*****" : SeverityVc[ Severity ];
+
+    struct timeval curTime;
+    gettimeofday(&curTime, NULL);
+    int milli = curTime.tv_usec / 1000;
+    char currentTime[84] = "";
+    strftime(currentTime, 84, "%H:%M:%S", localtime(&curTime.tv_sec));
+
+    // now we have something like:
+    // [Trace] 14:37,628 
+    fprintf(stderr, "[%5s] %s,%03d ", SeverityPt, currentTime, milli);
+#ifdef DEVEL_LOGGING
+    fprintf( stderr, "%s():%d: ", func, line);
+#endif
+
 }
