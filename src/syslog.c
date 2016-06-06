@@ -52,7 +52,9 @@ void my_log( int Severity, int Errno, const char *FmtSt, ... ) {
     if (Severity <= LogLevel) {
         if (Log2Stderr) {
             fprintf(stderr, "%s\n", LogMsg);
-        } else {
+        } else if (Severity <= LOG_DEBUG) {
+
+            // we log only kwnown severity levels to syslog
             syslog(Severity, "%s", LogMsg);
         }
     }

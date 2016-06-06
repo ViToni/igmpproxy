@@ -81,9 +81,7 @@ int main( int ArgCn, char *ArgVc[] ) {
             Log2Stderr = true;
             break;
         case 'v':
-            if (LogLevel < LOG_DEBUG) {
-                LogLevel++;
-            }
+            LogLevel++;
             break;
         case 'h':
             fputs(Usage, stderr);

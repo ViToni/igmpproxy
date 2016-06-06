@@ -106,6 +106,8 @@ extern char     s4[];
 
 /* syslog.c
  */
+#define LOG_TRACE (LOG_DEBUG+1)
+
 extern bool Log2Stderr;           // Log to stderr instead of to syslog
 extern int  LogLevel;             // Log threshold, LOG_WARNING .... LOG_DEBUG 
 
