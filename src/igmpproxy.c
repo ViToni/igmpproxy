@@ -63,7 +63,8 @@ static int sighandled = 0;
 #define GOT_SIGUSR2         0x08
 
 // The upstream VIF index
-int         upStreamVif[MAX_UPS_VIFS];   
+//int         upStreamVif[MAX_UPS_VIFS];   
+int         upStreamVif;   
 
 /**
 *   Program main method. Is invoked when the program is started
@@ -192,22 +193,21 @@ int igmpProxyInit(void) {
         struct IfDesc *Dp;
         int     vifcount = 0, upsvifcount = 0;
 
-        // init array to "not set"
-        for ( Ix = 0; Ix < MAX_UPS_VIFS; Ix++) {
-            upStreamVif[Ix] = -1;
-        }
+        // init to "not set"
+        upStreamVif = -1;
 
         for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
 
             if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
                 if(Dp->state == IF_STATE_UPSTREAM) {
-                    if (upsvifcount < MAX_UPS_VIFS -1) {
-                        my_log(LOG_DEBUG, 0, "Found upstrem IF #%d, will assing as upstream Vif %d",
-                            upsvifcount, Ix);
-                        upStreamVif[upsvifcount++] = Ix;
+                    if (upsvifcount) {
+                        my_log(LOG_ERR, 0, "Cannot set IF #%d as upstream as well. Upstream If is #%d",
+                            Ix, upStreamVif);
                     } else {
-                        my_log(LOG_ERR, 0, "Cannot set VIF #%d as upstream as well. Max upstream Vif count is %d",
-                            Ix, MAX_UPS_VIFS);
+                        my_log(LOG_DEBUG, 0, "Found upstream IF #%d, will assing as upstream Vif",
+                            Ix);
+                        upStreamVif = Ix;
+                        upsvifcount = 1;
                     }
                 }
 
@@ -219,7 +219,11 @@ int igmpProxyInit(void) {
         }
 
         if(0 == upsvifcount) {
-            my_log(LOG_ERR, 0, "There must be at least 1 Vif as upstream.");
+            my_log(LOG_ERR, 0, "There must be at  one Vif as upstream.");
+        }
+
+        if(vifcount < 2) {
+            my_log(LOG_ERR, 0, "There must be at one Vif as downstream. Found %d", vifcount-1); // -1 for the upstream
         }
     }
 

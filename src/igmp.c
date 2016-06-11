@@ -120,41 +120,46 @@ void acceptIgmp(int recvlen) {
     if (ip->ip_p == 0) {
         if (src == 0 || dst == 0) {
             my_log(LOG_WARNING, 0, "kernel request not accurate");
-        } else {
-            struct IfDesc *checkVIF;
+            return;
+        }
+
+        struct IfDesc *checkVIF;
             
-            for(i=0; i<MAX_UPS_VIFS; i++) {
-                if(-1 != upStreamVif[i]) {
-                    // Check if the source address matches a valid address on upstream vif.
-                    checkVIF = getIfByIx( upStreamVif[i] );
-                    if(checkVIF == 0) {
-                        my_log(LOG_ERR, 0, "Upstream VIF was null.");
-                        return;
-                    } else if(src == checkVIF->InAdr.s_addr) {
-                        my_log(LOG_NOTICE, 0, "Route activation request from %s for %s is from myself. Ignoring.",
-                            inetFmt(src, s1), inetFmt(dst, s2));
-                        return;
-                    } else if(!isAdressValidForIf(checkVIF, src)) {
-                        struct IfDesc *downVIF = getIfByAddress(src);
-                        if (downVIF && downVIF->state & IF_STATE_DOWNSTREAM) {
-                            my_log(LOG_NOTICE, 0, "The source address %s for group %s is from downstream VIF[%d]. Ignoring.",
-                                inetFmt(src, s1), inetFmt(dst, s2), i);
-                        } else {
-                            my_log(LOG_WARNING, 0, "The source address %s for group %s, is not in any valid net for upstream VIF[%d].",
-                                inetFmt(src, s1), inetFmt(dst, s2), i);
-                        }
-                    } else {
-                        // Activate the route.
-                        int vifindex = checkVIF->vifindex;
-                        my_log(LOG_DEBUG, 0, "Route activate request from %s to %s on VIF[%d]",
-                            inetFmt(src,s1), inetFmt(dst,s2), vifindex);
-                        activateRoute(dst, src, vifindex);
-                        i = MAX_UPS_VIFS;
-                    }
-                } else {
-                    i = MAX_UPS_VIFS;
-                }
+        // Check if the source address matches a valid address on upstream Vif.
+        checkVIF = getIfByIx( upStreamVif );
+        if(checkVIF == 0) {
+            my_log(LOG_ERR, 0, "Upstream VIF was null.");
+            return;
+        }
+
+        if(src == checkVIF->InAdr.s_addr) {
+            my_log(LOG_DEBUG, 0, "Route activation request from %s for %s is from myself. Ignoring.",
+                inetFmt(src, s1), 
+                inetFmt(dst, s2)
+            );
+            return;
+        }
+
+        if(!isAdressValidForIf(checkVIF, src)) {
+            struct IfDesc *downVIF = getIfByAddress(src);
+            if (downVIF && downVIF->state & IF_STATE_DOWNSTREAM) {
+                my_log(LOG_DEBUG, 0, "The source address %s for group %s is from downstream VIF[%d]. Ignoring.",
+                    inetFmt(src, s1), inetFmt(dst, s2), i);
+            } else {
+                my_log(LOG_WARNING, 0, "The source address %s for group %s, is not in any valid net for upstream VIF.",
+                    inetFmt(src, s1),
+                    inetFmt(dst, s2)
+                );
             }
+        } else {
+            // Activate the route.
+            my_log(LOG_DEBUG, 0, "Route activate request from %s to %s on VIF[%d]",
+                inetFmt(src,s1),
+                inetFmt(dst,s2), 
+                checkVIF->vifindex
+            );
+                        
+            activateRoute(dst, src);
         }
         return;
     }

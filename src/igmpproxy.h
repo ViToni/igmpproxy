@@ -189,8 +189,9 @@ struct Config {
     //~ aimwang added done
 };
 
+
 // Defines the Index of the upstream VIF...
-extern int upStreamVif[MAX_UPS_VIFS];
+extern int upStreamVif;
 
 /* ifvc.c
  */
@@ -282,7 +283,7 @@ int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr );
 void initRouteTable( void );
 void clearAllRoutes( void );
 int insertRoute( uint32_t group, int ifx );
-int activateRoute( uint32_t group, uint32_t originAddr, int upstrVif );
+int activateRoute( uint32_t group, uint32_t originAddr);
 void ageActiveRoutes( void );
 void setRouteLastMemberMode( uint32_t group );
 int lastMemberGroupAge( uint32_t group );

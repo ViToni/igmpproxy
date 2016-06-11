@@ -52,7 +52,7 @@ struct RouteTable {
 
     // Keeps the upstream membership state...
     short               upstrState;     // Upstream membership state.
-    int                 upstrVif;       // Upstream Vif Index.
+//    int                 upstrVif;       // Upstream Vif Index.
 
     // These parameters contain aging details.
     uint32_t            ageVifBits;     // Bits representing aging VIFs.
@@ -118,63 +118,64 @@ static void sendJoinLeaveUpstream(struct RouteTable* route, int join) {
     struct IfDesc*      upstrIf;
     int i;
     
-    for(i=0; i<MAX_UPS_VIFS; i++) {
-        if (-1 != upStreamVif[i]) {
-            // Get the upstream VIF...
-            upstrIf = getIfByIx( upStreamVif[i] );
-            if(upstrIf == NULL) {
-                my_log(LOG_ERR, 0 ,"FATAL: Unable to get Upstream IF.");
+            
+    // Get the upstream VIF...
+    upstrIf = getIfByIx( upStreamVif );
+    if(upstrIf == NULL) {
+        my_log(LOG_ERR, 0 ,"FATAL: Unable to get Upstream IF.");
+        return;
+    }
+
+    // Check if there is a white list for the upstram VIF
+    if (upstrIf->allowedgroups != NULL) {
+        uint32_t group = route->group;
+        struct SubnetList* sn;
+
+        // Check if this Request is legit to be forwarded to upstream
+        for(sn = upstrIf->allowedgroups; sn != NULL; sn = sn->next) {
+            if((group & sn->subnet_mask) == sn->subnet_addr) {
+                // Forward is OK...
+                break;
             }
+        }
 
-            // Check if there is a white list for the upstram VIF
-            if (upstrIf->allowedgroups != NULL) {
-                uint32_t group = route->group;
-                struct SubnetList* sn;
+        if (sn == NULL) {
+            my_log(LOG_INFO, 0, "The group address %s may not be forwarded upstream. Ignoring.", inetFmt(group, s1));
+            return;
+        }
+    }
 
-                // Check if this Request is legit to be forwarded to upstream
-                for(sn = upstrIf->allowedgroups; sn != NULL; sn = sn->next)
-                    if((group & sn->subnet_mask) == sn->subnet_addr) {
-                        // Forward is OK...
-                        break;
-                    }
+            
+    // Send join or leave request...    
+    if(join) {
+        // Only join a group if there are listeners downstream...
+        if(route->vifBits > 0) {
+            my_log(LOG_DEBUG, 0, "Joining group %s upstream on IF address %s",
+                    inetFmt(route->group, s1), 
+                    inetFmt(upstrIf->InAdr.s_addr, s2)
+            );
 
-                if (sn == NULL) {
-                    my_log(LOG_INFO, 0, "The group address %s may not be forwarded upstream. Ignoring.", inetFmt(group, s1));
-                    return;
-                }
-            }
+            //k_join(route->group, upstrIf->InAdr.s_addr);
+            joinMcGroup( getMcGroupSock(), upstrIf, route->group );
 
-            // Send join or leave request...
-            if(join) {
-                // Only join a group if there are listeners downstream...
-                if(route->vifBits > 0) {
-                    my_log(LOG_DEBUG, 0, "Joining group %s upstream on IF address %s",
-                                 inetFmt(route->group, s1), 
-                                 inetFmt(upstrIf->InAdr.s_addr, s2));
-
-                    //k_join(route->group, upstrIf->InAdr.s_addr);
-                    joinMcGroup( getMcGroupSock(), upstrIf, route->group );
-
-                    route->upstrState = ROUTESTATE_JOINED;
-                } else {
-                    my_log(LOG_DEBUG, 0, "No downstream listeners for group %s. No join sent.",
-                        inetFmt(route->group, s1));
-                }
-            } else {
-                // Only leave if group is not left already...
-                if(route->upstrState != ROUTESTATE_NOTJOINED) {
-                    my_log(LOG_DEBUG, 0, "Leaving group %s upstream on IF address %s",
-                                 inetFmt(route->group, s1), 
-                                 inetFmt(upstrIf->InAdr.s_addr, s2));
-
-                    //k_leave(route->group, upstrIf->InAdr.s_addr);
-                    leaveMcGroup( getMcGroupSock(), upstrIf, route->group );
-
-                    route->upstrState = ROUTESTATE_NOTJOINED;
-                }
-            }
+            route->upstrState = ROUTESTATE_JOINED;
         } else {
-            i = MAX_UPS_VIFS;
+            my_log(LOG_DEBUG, 0, "No downstream listeners for group %s. No join sent.",
+                    inetFmt(route->group, s1)
+            );
+        }
+    } else {
+        // Only leave if group is not left already...
+        if(route->upstrState != ROUTESTATE_NOTJOINED) {
+            my_log(LOG_DEBUG, 0, "Leaving group %s upstream on IF address %s",
+                    inetFmt(route->group, s1), 
+                    inetFmt(upstrIf->InAdr.s_addr, s2)
+            );
+
+            //k_leave(route->group, upstrIf->InAdr.s_addr);
+            leaveMcGroup( getMcGroupSock(), upstrIf, route->group );
+
+            route->upstrState = ROUTESTATE_NOTJOINED;
         }
     }
 }
@@ -267,7 +268,6 @@ int insertRoute(uint32_t group, int ifx) {
         memset(newroute->originAddrs, 0, MAX_ORIGINS * sizeof(newroute->originAddrs[0]));
         newroute->nextroute  = NULL;
         newroute->prevroute  = NULL;
-        newroute->upstrVif   = -1;
 
         // The group is not joined initially.
         newroute->upstrState = ROUTESTATE_NOTJOINED;
@@ -373,7 +373,7 @@ int insertRoute(uint32_t group, int ifx) {
 *   activated, it's reinstalled in the kernel. If
 *   the route is activated, no originAddr is needed.
 */
-int activateRoute(uint32_t group, uint32_t originAddr, int upstrVif) {
+int activateRoute(uint32_t group, uint32_t originAddr) {
     struct RouteTable*  croute;
     int result = 0;
 
@@ -423,7 +423,6 @@ int activateRoute(uint32_t group, uint32_t originAddr, int upstrVif) {
                 i--;
             }
         }
-        croute->upstrVif = upstrVif;
 
         // Only update kernel table if there are listeners !
         if(croute->vifBits > 0) {
@@ -658,7 +657,7 @@ int internUpdateKernelRoute(struct RouteTable *route, int activate) {
     int                     i;
 
     for (int i = 0; i < MAX_ORIGINS; i++) {
-        if (route->originAddrs[i] == 0 || route->upstrVif == -1) {
+        if (route->originAddrs[i] == 0 ) {
             continue;
         }
 
@@ -672,13 +671,12 @@ int internUpdateKernelRoute(struct RouteTable *route, int activate) {
 
         my_log(LOG_DEBUG, 0, "Vif bits : 0x%08x", route->vifBits);
 
-        mrDesc.InVif = route->upstrVif;
-
         // Set the TTL's for the route descriptor...
         for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
             if(Dp->state == IF_STATE_UPSTREAM) {
-                continue;
-            } else if(BIT_TST(route->vifBits, Dp->vifindex)) {
+                mrDesc.InVif = Dp->vifindex;
+            }
+            else if(BIT_TST(route->vifBits, Dp->vifindex)) {
                 my_log(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", Dp->vifindex, Dp->threshold);
                 mrDesc.TtlVc[ Dp->vifindex ] = Dp->threshold;
             }
