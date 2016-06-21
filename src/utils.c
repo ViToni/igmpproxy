@@ -1,5 +1,5 @@
 /*
-**  igmpproxy - IGMP proxy based multicast router 
+**  igmpproxy - IGMP proxy based multicast router
 **  Copyright (C) 2005 Johnny Egeland <johnny@rlo.org>
 **
 **  This program is free software; you can redistribute it and/or modify
@@ -24,28 +24,31 @@
 
 
 /**
-*   Returns plain text representation of the sa_family flag of the given 
+*   Returns plain text representation of the sa_family flag of the given
 *   struct ifreq (or "AF_UNKOWN" if not yet mapped).
 */
-const char* get_sa_family_str( const sa_family_t sa_family ) {
-    switch( sa_family ) {
-    case AF_INET:
-        return "AF_INET";
-    case AF_INET6:
-        return "AF_INET6";
-    default:
-        return "AF_UNKNOWN";
+const char *get_sa_family_str( const sa_family_t sa_family )
+{
+    switch ( sa_family ) {
+        case AF_INET:
+            return "AF_INET";
+        case AF_INET6:
+            return "AF_INET6";
+        default:
+            return "AF_UNKNOWN";
     }
 }
 
-struct sockaddr_in* sockaddr2sockaddr_in(struct sockaddr* sockaddrPt) {
-    struct sockaddr_in *sockaddr_inPt = ((struct sockaddr_in *) sockaddrPt);
+struct sockaddr_in *sockaddr2sockaddr_in( struct sockaddr *sockaddrPt )
+{
+    struct sockaddr_in *sockaddr_inPt = ( (struct sockaddr_in *) sockaddrPt );
 
     return sockaddr_inPt;
 }
 
-struct in_addr sockaddr2in_addr(struct sockaddr* sockaddrPt) {
-    struct sockaddr_in *sockaddr_inPt = sockaddr2sockaddr_in(sockaddrPt);
+struct in_addr sockaddr2in_addr( struct sockaddr *sockaddrPt )
+{
+    struct sockaddr_in *sockaddr_inPt = sockaddr2sockaddr_in( sockaddrPt );
 
     return sockaddr_inPt->sin_addr;
 }
