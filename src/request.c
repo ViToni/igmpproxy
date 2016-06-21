@@ -43,8 +43,8 @@
 void sendGroupSpecificMemberQuery(void *argument);  
 
 typedef struct {
-    uint32_t      group;
-    // uint32_t      vifAddr;
+    uint32_t    group;
+    //uint32_t    vifAddr;
     short       started;
 } GroupVifDesc;
 
@@ -56,7 +56,7 @@ typedef struct {
 void acceptGroupReport(uint32_t src, uint32_t group) {
     struct IfDesc  *sourceVif;
 
-    // Sanitycheck the group adress...
+    // Sanity check the group adress...
     if(!IN_MULTICAST( ntohl(group) )) {
         my_log(LOG_WARNING, 0, "The group address %s is not a valid Multicast group.",
             inetFmt(group, s1));
@@ -67,19 +67,22 @@ void acceptGroupReport(uint32_t src, uint32_t group) {
     sourceVif = getIfByAddress( src );
     if(sourceVif == NULL) {
         my_log(LOG_WARNING, 0, "No interfaces found for source %s",
-            inetFmt(src,s1));
+            inetFmt(src, s1)
+        );
         return;
     }
 
     if(sourceVif->InAdr.s_addr == src) {
-        my_log(LOG_NOTICE, 0, "The IGMP message was from myself. Ignoring.");
+        my_log(LOG_NOTICE, 0, "The IGMP message was from myself, src: %s. Ignoring.",
+            inetFmt(src, s1)
+        );
         return;
     }
 
-    // We have a IF so check that it's an downstream IF.
+    // We have a IF so check that it's a downstream IF.
     if(sourceVif->state == IF_STATE_DOWNSTREAM) {
 
-        my_log(LOG_DEBUG, 0, "Should insert group %s (from: %s) to route table. Vif Ix : %d",
+        my_log(LOG_DEBUG, 0, "Should insert group %s (from: %s) to route table. VIF #%d",
             inetFmt(group,s1), inetFmt(src,s2), sourceVif->vifindex);
 
         // If we don't have a whitelist we insertRoute and done
@@ -100,13 +103,13 @@ void acceptGroupReport(uint32_t src, uint32_t group) {
         my_log(LOG_INFO, 0, "The group address %s may not be requested from this interface. Ignoring.", inetFmt(group, s1));
     } else {
         // Log the state of the interface the report was received on.
-        my_log(LOG_INFO, 0, "Mebership report was receeved on %s. Ignoring.",
+        my_log(LOG_INFO, 0, "Membership report was received on %s. Ignoring.",
             sourceVif->state==IF_STATE_UPSTREAM ? "the upstream interface" : "a disabled interface");
     }
 }
 
 /**
-*   Receives and handles a group leave message.
+**   Receives and handles a group leave message.
 */
 void acceptLeaveMessage(uint32_t src, uint32_t group) {
     struct IfDesc   *sourceVif;
@@ -141,7 +144,7 @@ void acceptLeaveMessage(uint32_t src, uint32_t group) {
 
         // Call the group spesific membership querier...
         gvDesc->group = group;
-        // gvDesc->vifAddr = sourceVif->InAdr.s_addr;
+        //gvDesc->vifAddr = sourceVif->InAdr.s_addr;
         gvDesc->started = 0;
 
         sendGroupSpecificMemberQuery(gvDesc);
@@ -194,9 +197,20 @@ void sendGroupSpecificMemberQuery(void *argument) {
                             gvDesc->group, 0);
 
                     my_log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d",
-                            inetFmt(Dp->InAdr.s_addr,s1), inetFmt(gvDesc->group,s2),
+                            inetFmt(Dp->InAdr.s_addr, s1), inetFmt(gvDesc->group,s2),
                             conf->lastMemberQueryInterval);
-                }
+
+                    // Send a group specific V3 membership query...
+                    sendIgmp(Dp->InAdr.s_addr, allhosts_group, 
+                            IGMP_V3_MEMBERSHIP_QUERY,
+                            conf->lastMemberQueryInterval * IGMP_TIMER_SCALE, 
+                            gvDesc->group, 0);
+
+                    my_log(LOG_DEBUG, 0, "Sent membership query from %s to %s. Delay: %d",
+                            inetFmt(Dp->InAdr.s_addr, s1), inetFmt(allhosts_group, s2),
+                            conf->lastMemberQueryInterval);
+
+                 }
             }
         }
     }
@@ -220,13 +234,25 @@ void sendGeneralMembershipQuery(void) {
                 // Send the membership query...
                 sendIgmp(Dp->InAdr.s_addr, allhosts_group, 
                          IGMP_MEMBERSHIP_QUERY,
-                         conf->queryResponseInterval * IGMP_TIMER_SCALE, 0, 0);
-                
+                         conf->queryResponseInterval * IGMP_TIMER_SCALE, 0, 0
+                );
+
                 my_log(LOG_DEBUG, 0,
-                "Sent membership query from %s to %s. Delay: %d",
-                inetFmt(Dp->InAdr.s_addr,s1),
-                inetFmt(allhosts_group,s2),
-                conf->queryResponseInterval);
+                        "Sent V2 membership query from %s to %s. Delay: %d",
+                        inetFmt(Dp->InAdr.s_addr,s1),
+                        inetFmt(allhosts_group,s2),
+                        conf->queryResponseInterval
+                );
+
+                sendIgmp(Dp->InAdr.s_addr, allhosts_group, 
+                         IGMP_V3_MEMBERSHIP_QUERY,
+                         conf->queryResponseInterval * IGMP_TIMER_SCALE, v3_genqry_group, 0);
+                
+                my_log(LOG_DEBUG, 0, "Sent V3 membership query from %s to %s. Delay: %d",
+                    inetFmt(Dp->InAdr.s_addr,s1), inetFmt(allhosts_group,s2),
+                    conf->queryResponseInterval);
+
+
             }
         }
     }

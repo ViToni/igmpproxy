@@ -250,7 +250,9 @@ struct Config *getCommonConfig( void );
 */
 extern uint32_t allhosts_group;
 extern uint32_t allrouters_group;
+extern uint32_t allrouters_group_v3;
 extern uint32_t alligmp3_group;
+extern uint32_t v3_genqry_group;
 
 void initIgmp( void );
 void acceptIgmp( int );
@@ -299,7 +301,7 @@ int leaveMcGroup( int UdpSock, struct IfDesc *IfDp, uint32_t mcastaddr );
 void initRouteTable( void );
 void clearAllRoutes( void );
 int insertRoute( uint32_t group, int ifx );
-int activateRoute( uint32_t group, uint32_t originAddr, int upstrVif );
+int activateRoute( uint32_t group, uint32_t originAddr, int downVif );
 void ageActiveRoutes( void );
 void setRouteLastMemberMode( uint32_t group );
 int lastMemberGroupAge( uint32_t group );

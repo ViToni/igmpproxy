@@ -111,7 +111,7 @@ void delete_subnetlist( struct SubnetList *subnet ) {
 void remove_allowednet( struct IfDesc *Dp ) {
     // clear list
     delete_subnetlist(Dp->allowednets);
-    // clear danling pointer
+    // clear dangling pointer
     Dp->allowednets = NULL;
 }
 
@@ -195,13 +195,13 @@ void buildIf(
     strncpy( Dp->Name, ifa->ifa_name, sizeof( Dp->Name ) );
 
     // Currently don't set any allowednets...
-    //IfDescEp->allowednets = NULL;
+    //Dp->allowednets = NULL;
 
     // Set the Vif index to -1 by default.
-    IfDescEp->vifindex = -1;
+    Dp->vifindex = -1;
 
     // Get the interface adress...
-    IfDescEp->InAdr = sockaddr2in_addr(ifa->ifa_addr);
+    Dp->InAdr = sockaddr2in_addr(ifa->ifa_addr);
 
     /* get if flags
     **
@@ -224,12 +224,20 @@ void buildIf(
     Dp->ratelimit     = DEFAULT_RATELIMIT; 
 
     // Debug log the result...
-    my_log( LOG_DEBUG, 0, "buildIf: Interface %s Addr: %s, Flags: 0x%04x, Network: %s",
+    my_log( LOG_DEBUG, 0, "buildIf: Interface %s Addr: %s, Flags: 0x%04x",
            Dp->Name,
            fmtInAdr( FmtBu, Dp->InAdr ),
-           Dp->Flags,
-           inetFmts( Dp->allowednets->subnet_addr, Dp->allowednets->subnet_mask, s1 )
+           Dp->Flags
     );
+
+    struct SubnetList *allowednets = Dp->allowednets;
+    while (allowednets) {
+        my_log( LOG_DEBUG, 0, "buildIf: Interface %s, Network: %s",
+                Dp->Name,
+                inetFmts( allowednets->subnet_addr, allowednets->subnet_mask, s1 )
+        );
+        allowednets = allowednets->next;
+    }
 
     my_log(LOG_TRACE, 0, "buildIf: ...done.");
 }
@@ -346,12 +354,20 @@ void rebuildIfVc () {
         }
 
         // Debug log the result...
-        my_log( LOG_DEBUG, 0, "rebuildIfVc: Interface %s Addr: %s, Flags: 0x%04x, Network: %s",
+        my_log( LOG_DEBUG, 0, "rebuildIfVc: Interface %s Addr: %s, Flags: 0x%04x",
              Dp->Name,
              fmtInAdr( FmtBu, Dp->InAdr ),
-             Dp->Flags,
-             inetFmts( subnet, mask, s1 )
+             Dp->Flags
         );
+
+        struct SubnetList *allowednets = Dp->allowednets;
+        while (allowednets) {
+            my_log( LOG_DEBUG, 0, "rebuildIfVc: Interface %s, Network: %s",
+                    Dp->Name,
+                    inetFmts( allowednets->subnet_addr, allowednets->subnet_mask, s1 )
+            );
+            allowednets = allowednets->next;
+        }
     }
 
     // aimwang: search no longer existing IF, set as hidden and call delVIF
@@ -423,12 +439,20 @@ void buildIfVc(void) {
             buildIf( ifa, IfDescEp, config->defaultInterfaceState );
 
             // Debug log the result...
-            my_log( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x, Network: %s",
+            my_log( LOG_DEBUG, 0, "buildIfVc: Interface %s Addr: %s, Flags: 0x%04x",
                  IfDescEp->Name,
                  fmtInAdr( FmtBu, IfDescEp->InAdr ),
-                 IfDescEp->Flags,
-                 inetFmts( subnet,mask, s1 )
+                 IfDescEp->Flags
             );
+
+            struct SubnetList *allowednets = IfDescEp->allowednets;
+            while (allowednets) {
+                my_log( LOG_DEBUG, 0, "buildIfVc: Interface %s, Network: %s",
+                    IfDescEp->Name,
+                    inetFmts( allowednets->subnet_addr, allowednets->subnet_mask, s1 )
+                );
+                allowednets = allowednets->next;
+            }
 
             IfDescEp++;
         }
@@ -497,9 +521,8 @@ struct IfDesc *getIfByAddress( uint32_t ipaddr ) {
 
 
 /**
-*   Returns a pointer to the IfDesc whose subnet matches
-*   the supplied IP adress. The IP must match a interfaces
-*   subnet, or any configured allowed subnet on a interface.
+**  Returns a pointer to the IfDesc whose vifinex matches
+**  the supplied VIF index.
 */
 struct IfDesc *getIfByVifIndex( unsigned vifindex ) {
     struct IfDesc       *Dp;
@@ -516,8 +539,8 @@ struct IfDesc *getIfByVifIndex( unsigned vifindex ) {
 
 
 /**
-*   Function that checks if a given ipaddress is a valid
-*   address for the supplied VIF.
+**  Function that checks if a given IP address is a valid
+**  address for the supplied VIF.
 */
 int isAdressValidForIf( struct IfDesc* intrface, uint32_t ipaddr ) {
     struct SubnetList   *currsubnet;
@@ -528,7 +551,7 @@ int isAdressValidForIf( struct IfDesc* intrface, uint32_t ipaddr ) {
     // Loop through all registered allowed nets of the VIF...
     for( currsubnet = intrface->allowednets; currsubnet != NULL; currsubnet = currsubnet->next ) {
         // Check if the ip falls in under the subnet....
-        if((ipaddr & currsubnet->subnet_mask) == (currsubnet->subnet_addr& currsubnet->subnet_mask)) {
+        if((ipaddr & currsubnet->subnet_mask) == (currsubnet->subnet_addr & currsubnet->subnet_mask)) {
             return 1;
         }
     }

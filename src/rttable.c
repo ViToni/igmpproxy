@@ -38,7 +38,20 @@
 
 #include "igmpproxy.h"
 
+#include <sys/queue.h>
+
 #define MAX_ORIGINS 4
+
+/**
+**   Routing table structure definition. Double linked list...
+**/
+struct Origin {
+    TAILQ_ENTRY(Origin) next;
+    uint32_t            originAddr;
+    int                 flood;
+    uint32_t            pktcnt;
+};
+
 
 /**
 *   Routing table structure definition. Double linked list...
@@ -47,7 +60,6 @@ struct RouteTable {
     struct RouteTable   *nextroute;     // Pointer to the next group in line.
     struct RouteTable   *prevroute;     // Pointer to the previous group in line.
     uint32_t            group;          // The group to route
-    uint32_t            originAddrs[MAX_ORIGINS]; // The origin adresses (only set on activated routes)
     uint32_t            vifBits;        // Bits representing receiving VIFs.
 
     // Keeps the upstream membership state...
@@ -58,6 +70,8 @@ struct RouteTable {
     uint32_t            ageVifBits;     // Bits representing aging VIFs.
     int                 ageValue;       // Downcounter for death.          
     int                 ageActivity;    // Records any acitivity that notes there are still listeners.
+
+    TAILQ_HEAD(originhead, Origin) originList; // The origin adresses (non-empty on activated routes) 
 };
 
                  
@@ -67,21 +81,17 @@ static struct RouteTable   *routing_table;
 // Prototypes
 void logRouteTable(const char *header);
 int internAgeRoute(struct RouteTable *croute);
-int internUpdateKernelRoute( const struct RouteTable *route, const int activate );
-
-// Socket for sending join or leave requests.
-int mcGroupSock = -1;
-
+int internUpdateKernelRoute( const struct RouteTable *route, const int activate, const struct Origin *o );
 
 /**
 *   Function for retrieving the Multicast Group socket.
 */
 int getMcGroupSock(void) {
-    if( mcGroupSock < 0 ) {
-        mcGroupSock = openUdpSocket( INADDR_ANY, 0 );;
+    if (MRouterFD < 0) {
+        my_log(LOG_ERR, errno, "no MRouterFD.");
     }
 
-    return mcGroupSock;
+    return MRouterFD;
 }
  
 /**
@@ -99,18 +109,18 @@ void initRouteTable(void) {
         // If this is a downstream vif, we should join the All routers group...
         if( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) && Dp->state == IF_STATE_DOWNSTREAM) {
             my_log(LOG_DEBUG, 0, "Joining all-routers group %s on vif %s",
-                    inetFmt(allrouters_group,s1),
-                    inetFmt(Dp->InAdr.s_addr,s2)
+                    inetFmt( allrouters_group, s1 ),
+                    inetFmt( Dp->InAdr.s_addr, s2 )
             );
             
             //k_join(allrouters_group, Dp->InAdr.s_addr);
             joinMcGroup( getMcGroupSock(), Dp, allrouters_group );
 
             my_log(LOG_DEBUG, 0, "Joining all igmpv3 multicast routers group %s on vif %s",
-                    inetFmt(alligmp3_group,s1),
-                    inetFmt(Dp->InAdr.s_addr,s2)
+                    inetFmt( allrouters_group_v3, s1 ),
+                    inetFmt( Dp->InAdr.s_addr, s2 )
             );
-            joinMcGroup( getMcGroupSock(), Dp, alligmp3_group );
+            joinMcGroup( getMcGroupSock(), Dp, allrouters_group_v3 );
         }
     }
 }
@@ -204,7 +214,8 @@ static void sendJoinLeaveUpstream( struct RouteTable *route, const int join ) {
 */
 void clearAllRoutes( void ) {
     struct RouteTable   *croute, *remainroute;
-
+    struct Origin *o;
+ 
     // Loop through all routes...
     for(croute = routing_table; croute; croute = remainroute) {
 
@@ -215,7 +226,7 @@ void clearAllRoutes( void ) {
                      inetFmt(croute->group, s1));
 
         // Uninstall current route
-        if(!internUpdateKernelRoute(croute, 0)) {
+        if(!internUpdateKernelRoute(croute, 0, NULL)) {
             my_log(LOG_WARNING, 0, "Removal of route from Kernel failed.");
         }
 
@@ -223,6 +234,12 @@ void clearAllRoutes( void ) {
         sendJoinLeaveUpstream(croute, 0);
 
         // Clear memory, and set pointer to next route...
+        while ((o = TAILQ_FIRST(&croute->originList))) {
+            TAILQ_REMOVE(&croute->originList, o, next);
+            free(o);
+        }
+
+       // Clear memory, and set pointer to next route...
         free(croute);
     }
     routing_table = NULL;
@@ -274,7 +291,7 @@ int insertRoute(const uint32_t group, const int ifx) {
 
     // Try to find an existing route for this group...
     croute = findRoute(group);
-    if(croute==NULL) {
+    if( NULL == croute ) {
         struct RouteTable*  newroute;
 
         my_log(LOG_DEBUG, 0, "No existing route for %s. Create new.",
@@ -286,7 +303,8 @@ int insertRoute(const uint32_t group, const int ifx) {
         newroute = (struct RouteTable*)malloc(sizeof(struct RouteTable));
         // Insert the route desc and clear all pointers...
         newroute->group      = group;
-        memset(newroute->originAddrs, 0, MAX_ORIGINS * sizeof(newroute->originAddrs[0]));
+        TAILQ_INIT(&newroute->originList);
+
         newroute->nextroute  = NULL;
         newroute->prevroute  = NULL;
         newroute->upstrVif   = -1;
@@ -364,6 +382,9 @@ int insertRoute(const uint32_t group, const int ifx) {
                 ifx
         );
 
+        // Send Join request upstream
+        sendJoinLeaveUpstream(croute, 1);
+
     } else if(ifx >= 0) {
 
         // The route exists already, so just update it.
@@ -378,19 +399,35 @@ int insertRoute(const uint32_t group, const int ifx) {
                 ifx
         );
         
-        // Update route in kernel...
-        if(!internUpdateKernelRoute(croute, 1)) {
-            my_log(LOG_WARNING, 0, "The insertion into Kernel failed.");
-            return 0;
-        }
-    }
+         // If the route is active, it must be reloaded into the Kernel..
+        if(!TAILQ_EMPTY(&croute->originList)) {
 
-    // Send join message upstream, if the route has no joined flag...
-    if(croute->upstrState != ROUTESTATE_JOINED) {
-        // Send Join request upstream
-        struct IfDesc*      downstrIf;
-        downstrIf = getIfByIx(ifx);
-        sendJoinLeaveUpstream(croute, 1);
+            // Update route in kernel...
+            if(!internUpdateKernelRoute(croute, 1, NULL)) {
+                my_log(LOG_WARNING, 0, "The insertion into Kernel failed.");
+                return 0;
+            }
+        }
+
+        struct IfDesc*      upstrIf = NULL;
+    
+        for(int i=0; i<MAX_UPS_VIFS; i++) {
+            if (-1 != upStreamIfIdx[i]) {
+                // Get the upstream VIF...
+                upstrIf = getIfByIx( upStreamIfIdx[i] );
+                if(upstrIf == NULL) {
+                    my_log(LOG_ERR, 0 ,"FATAL: Unable to get Upstream IF.");
+                }
+                else {
+                    // Send join message upstream
+                    sendIgmp(upstrIf->InAdr.s_addr, allrouters_group_v3, IGMP_V3_MEMBERSHIP_REPORT, 0, group, 0);
+                    sendIgmp(upstrIf->InAdr.s_addr, group, IGMP_V2_MEMBERSHIP_REPORT, 0, group, 0);
+                }
+            }
+        }
+        if(upstrIf == NULL) {
+            my_log(LOG_ERR, 0 ,"FATAL: Unable to find any Upstream IF.");
+        }
     }
 
     logRouteTable("Insert Route");
@@ -403,7 +440,7 @@ int insertRoute(const uint32_t group, const int ifx) {
 *   activated, it's reinstalled in the kernel. If
 *   the route is activated, no originAddr is needed.
 */
-int activateRoute( const uint32_t group, const uint32_t originAddr, const int upstrVif ) {
+int activateRoute( const uint32_t group, const uint32_t originAddr, const int downVif) {
     struct RouteTable   *croute;
     int result = 0;
 
@@ -424,45 +461,57 @@ int activateRoute( const uint32_t group, const uint32_t originAddr, const int up
     }
 
     if( NULL != croute ) {
+       struct Origin *o = NULL;
+       int found = 0;
+
         // If the origin address is set, update the route data.
         if(originAddr > 0) {
-            // find this origin, or an unused slot
-            int i;
-            for (i = 0; i < MAX_ORIGINS; i++) {
-                // unused slots are at the bottom, so we can't miss this origin
-                if (croute->originAddrs[i] == originAddr || croute->originAddrs[i] == 0) {
+
+            TAILQ_FOREACH(o, &croute->originList, next) {
+                my_log(LOG_INFO, 0, "Origin for route %s was %s, new %s",
+                    inetFmt( croute->group, s1 ),
+                    inetFmt( o->originAddr, s2 ),
+                    inetFmt( originAddr, s3 )
+                );
+
+                if (o->originAddr==originAddr) {
+                    found++;
                     break;
                 }
             }
 
-            if (i == MAX_ORIGINS) {
-                i = MAX_ORIGINS - 1;
+            if (!found) {
+                my_log(LOG_NOTICE, 0, "New origin for route %s is %s, flooding VIF #%d",
+                    inetFmt( croute->group, s1 ),
+                    inetFmt( originAddr, s3),
+                    downVif
+                );
+                o = malloc(sizeof(*o));
+                o->originAddr   = originAddr;
+                o->flood        = downVif;
+                o->pktcnt       = 0;
+                TAILQ_INSERT_TAIL(&croute->originList, o, next);
 
-                my_log(LOG_WARNING, 0, "Too many origins for route %s; replacing %s with %s",
+                my_log(LOG_DEBUG, 0, "Inserted new origin for route %s is %s, flooding VIF #%d",
                         inetFmt( croute->group, s1 ),
-                        inetFmt( croute->originAddrs[i], s2 ),
-                        inetFmt( originAddr, s3 )
+                        inetFmt( originAddr, s3 ), 
+                        downVif
+                );
+            } else {
+                my_log(LOG_INFO, 0, "Have origin for route %s at %s, pktcnt %d",
+                        inetFmt( croute->group, s1 ),
+                        inetFmt( o->originAddr, s3 ),
+                        o->pktcnt
                 );
             }
-            
-            // set origin
-            croute->originAddrs[i] = originAddr;
-            
-            // move it to the top
-            while (i > 0) {
-                uint32_t t = croute->originAddrs[i - 1];
-                croute->originAddrs[i - 1] = croute->originAddrs[i];
-                croute->originAddrs[i] = t;
-                i--;
-            }
         }
-        croute->upstrVif = upstrVif;
 
-        // Only update kernel table if there are listeners !
-        if(croute->vifBits > 0) {
-            result = internUpdateKernelRoute(croute, 1);
+        // Only update kernel table if there are listeners, but flood upstream!
+        if(croute->vifBits > 0 || downVif >= 0) {
+            result = internUpdateKernelRoute(croute, 1, o);
         }
     }
+
     logRouteTable("Activate Route");
 
     return result;
@@ -564,6 +613,7 @@ int lastMemberGroupAge(const uint32_t group) {
 */
 static int removeRoute(struct RouteTable *croute) {
     struct Config       *conf = getCommonConfig();
+    struct Origin       *o;
     int result = 1;
     
     // If croute is null, no routes was found.
@@ -578,7 +628,7 @@ static int removeRoute(struct RouteTable *croute) {
     //BIT_ZERO(croute->vifBits);
 
     // Uninstall current route from kernel
-    if(!internUpdateKernelRoute(croute, 0)) {
+    if(!internUpdateKernelRoute(croute, 0, NULL)) {
         my_log(LOG_WARNING, 0, "The removal from Kernel failed.");
         result = 0;
     }
@@ -603,8 +653,15 @@ static int removeRoute(struct RouteTable *croute) {
         }
     }
 
-    // Free the memory, and set the route to NULL...
+    // Free the memory of the origins...
+    while ((o = TAILQ_FIRST(&croute->originList))) {
+        TAILQ_REMOVE(&croute->originList, o, next);
+        free(o);
+    }
+ 
+    //  ... the route ...
     free(croute);
+    //  ... and set the route to NULL
     croute = NULL;
 
     logRouteTable("Remove route");
@@ -651,7 +708,39 @@ int internAgeRoute(struct RouteTable *croute) {
         }
     }
 
-    // If the aging counter has reached zero, it's time for updating...
+    {
+        struct Origin *o, *nxt;
+        struct sioc_sg_req sg_req;
+
+        sg_req.grp.s_addr = croute->group;
+        for (o = TAILQ_FIRST(&croute->originList); o; o = nxt) {
+            nxt = TAILQ_NEXT(o, next);
+            sg_req.src.s_addr = o->originAddr;
+            if (ioctl(MRouterFD, SIOCGETSGCNT, (char *)&sg_req) < 0) {
+                my_log(LOG_WARNING, errno, "%s (%s %s)",
+                        "age_table_entry: SIOCGETSGCNT failing for",
+                        inetFmt(o->originAddr, s1),
+                        inetFmt(croute->group, s2)
+                );
+                // Make sure it gets deleted below
+                sg_req.pktcnt = o->pktcnt;
+            }
+            my_log(LOG_DEBUG, 0, "Aging Origin %s Dst %s PktCnt %d -> %d",
+                    inetFmt(o->originAddr, s1), inetFmt(croute->group, s2),
+                    o->pktcnt, sg_req.pktcnt
+            );
+            if (sg_req.pktcnt == o->pktcnt) {
+                // no traffic, remove from kernel cache
+                internUpdateKernelRoute(croute, 0, o);
+                TAILQ_REMOVE(&croute->originList, o, next);
+                free(o);
+            } else {
+                o->pktcnt = sg_req.pktcnt;
+            }
+        }
+    }
+
+    // If the aging counter has reached zero, its time for updating...
     if(croute->ageValue == 0) {
         // Check for activity in the aging process,
         if(croute->ageActivity>0) {
@@ -661,7 +750,7 @@ int internAgeRoute(struct RouteTable *croute) {
             );
             
             // Just update the routing settings in kernel...
-            internUpdateKernelRoute(croute, 1);
+            internUpdateKernelRoute(croute, 1, NULL);
 
             // We append the activity counter to the age, and continue...
             croute->ageValue = croute->ageActivity;
@@ -688,45 +777,66 @@ int internAgeRoute(struct RouteTable *croute) {
 /**
 *   Updates the Kernel routing table. If activate is 1, the route
 *   is (re-)activated. If activate is false, the route is removed.
+*   if 'origin' is given, only the route with 'origin' will be
+*   updated, otherwise all MFC routes for the group will updated.
 */
-int internUpdateKernelRoute(const struct RouteTable *route, const int activate) {
+int internUpdateKernelRoute(const struct RouteTable *route, const int activate, const struct Origin *origin) {
     struct   MRouteDesc     mrDesc;
     struct   IfDesc         *Dp;
     unsigned                Ix;
     int                     i;
+    struct Origin           *o;
 
-    for (int i = 0; i < MAX_ORIGINS; i++) {
-        if (route->originAddrs[i] == 0) {
-            my_log(LOG_TRACE, 0, "Route has no origin address. Ignoring.");
-            continue;
-        }
-        if ( route->upstrVif == -1) {
-            my_log(LOG_TRACE, 0, "Route for origin %s has no VIF. Ignoring.",
-                    inetFmt( route->originAddrs[i], s1 )
-            );
-        }
+    if (TAILQ_EMPTY(&route->originList)) {
+        my_log(LOG_NOTICE, 0, "Route is not active. No kernel updates done.");
 
+        return 1;
+    }
+
+    TAILQ_FOREACH(o, &route->originList, next) {
+        if (origin && origin != o) {
+           continue;
+        }
+ 
         // Build route descriptor from table entry...
         // Set the source address and group address...
         mrDesc.McAdr.s_addr     = route->group;
-        mrDesc.OriginAdr.s_addr = route->originAddrs[i];
+        mrDesc.OriginAdr.s_addr = o->originAddr;
+
+        // set default, searching correct upstream in loop
+        mrDesc.InVif = -1;      
 
         // clear output interfaces 
         memset( mrDesc.TtlVc, 0, sizeof( mrDesc.TtlVc ) );
 
-        my_log(LOG_DEBUG, 0, "Vif bits : 0x%08x", route->vifBits);
-
-        // FIXME: when using multiple upstreams, which is the right one?
-        mrDesc.InVif = route->upstrVif;
+        my_log(LOG_DEBUG, 0, "Origin %s Vif bits : 0x%08x", inetFmt(o->originAddr, s1), route->vifBits);
 
         // Set the TTL's for the route descriptor...
-        for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
-            if(Dp->state == IF_STATE_UPSTREAM) {
-                // FIXME: when using multiple upstreams, which is the right one?
-                continue;
-            } else if(BIT_TST(route->vifBits, Dp->vifindex)) {
-                my_log(LOG_DEBUG, 0, "Setting TTL for Vif %d to %d", Dp->vifindex, Dp->threshold);
-                mrDesc.TtlVc[ Dp->vifindex ] = Dp->threshold;
+        for ( Ix = 0; (Dp = getIfByIx( Ix )); Ix++ ) {
+            if (o->flood >= 0) {
+                if(Ix == (unsigned) o->flood) {
+                    my_log(LOG_DEBUG, 0, "Identified Input VIF #%d as DOWNSTREAM.", Dp->vifindex);
+    
+                    // FIXME: when using multiple upstreams, does this still work?
+                    mrDesc.InVif = Dp->vifindex;
+                }
+                else if(Dp->state == IF_STATE_UPSTREAM) {
+                    my_log(LOG_DEBUG, 0, "Setting TTL for UPSTREAM VIF #%d to %d", Dp->vifindex, Dp->threshold);
+                    mrDesc.TtlVc[ Dp->vifindex ] = Dp->threshold;
+                }
+                else if(BIT_TST(route->vifBits, Dp->vifindex)) {
+                    my_log(LOG_DEBUG, 0, "Setting TTL for DOWNSTREAM VIF #%d to %d", Dp->vifindex, Dp->threshold);
+                    mrDesc.TtlVc[ Dp->vifindex ] = Dp->threshold;
+                }
+            } else {
+                if(Dp->state == IF_STATE_UPSTREAM) {
+                    my_log(LOG_DEBUG, 0, "Identified VIF #%d as upstream.", Dp->vifindex);
+                    mrDesc.InVif = Dp->vifindex;
+                }
+                else if(BIT_TST(route->vifBits, Dp->vifindex)) {
+                    my_log(LOG_DEBUG, 0, "Setting TTL for VIF #%d to %d", Dp->vifindex, Dp->threshold);
+                    mrDesc.TtlVc[ Dp->vifindex ] = Dp->threshold;
+                }
             }
         }
 
@@ -747,8 +857,8 @@ int internUpdateKernelRoute(const struct RouteTable *route, const int activate) 
 *   Debug function that writes the routing table entries
 *   to the log.
 */
-void logRouteTable(const char *header) {
-    struct RouteTable*  croute = routing_table;
+void logRouteTable( const char *header ) {
+    struct RouteTable   *croute = routing_table;
     unsigned            rcount = 0;
 
     my_log(LOG_DEBUG, 0, "");
@@ -757,32 +867,32 @@ void logRouteTable(const char *header) {
     if( NULL == croute ) {
         my_log(LOG_DEBUG, 0, "No routes in table...");
     } else {
-        do {
-            char st = 'I';
-            char src[MAX_ORIGINS * 30 + 1];
-            src[0] = '\0';
+        while (NULL != croute) {
 
-            for (int i = 0; i < MAX_ORIGINS; i++) {
-                if (croute->originAddrs[i] == 0) {
-                    continue;
-                }
-                st = 'A';
-                sprintf(src + strlen(src), "Src%d: %s, ", i, inetFmt(croute->originAddrs[i], s1));
-            }
-
-            my_log(LOG_DEBUG, 0, "#%d: %sDst: %s, Age:%d, St: %c, OutVifs: 0x%08x",
-                    rcount, 
-                    src, 
-                    inetFmt( croute->group, s2 ),
-                    croute->ageValue,
-                    st,
-                    croute->vifBits
+            my_log(LOG_DEBUG, 0, "#%d: Dst: %s, Age:%d, State: %s, OutVifs: 0x%08x",
+                rcount,
+                inetFmt(croute->group, s2),
+                croute->ageValue,
+                (TAILQ_EMPTY(&croute->originList)?"inactive":"active"),
+                croute->vifBits
             );
+
+            {
+                struct Origin *o;
+                TAILQ_FOREACH(o, &croute->originList, next) {
+                    my_log(LOG_DEBUG, 0, "#%d: Origin: %s floodVIF #%d pktcnt %d",
+                            rcount, 
+                            inetFmt(o->originAddr, s3), 
+                            o->flood,
+                            o->pktcnt
+                    );
+                }
+            }
 
             croute = croute->nextroute; 
 
             rcount++;
-        } while ( croute != NULL );
+        };
     }
 
     my_log(LOG_DEBUG, 0, "-----------------------------------------------------");

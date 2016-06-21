@@ -46,9 +46,9 @@
      
 // need an IGMP socket as interface for the mrouted API
 // - receives the IGMP messages
-int         MRouterFD;          /* socket for all network I/O  */
-char        *recv_buf;          /* input packet buffer         */
-char        *send_buf;          /* output packet buffer        */
+int         MRouterFD;          // socket for all network I/O
+char        *recv_buf;          // input packet buffer
+char        *send_buf;          // output packet buffer
 
 
 // my internal virtual interfaces descriptor vector  
@@ -115,7 +115,7 @@ void delVIF( struct IfDesc *IfDp ) {
     struct VifDesc *VifDp;
 
     if (-1 == IfDp->vifindex) {
-        my_log( LOG_DEBUG, 0, "delVIF: No VIF to remove, Ix %d, %s (IP: %s)", 
+        my_log( LOG_DEBUG, 0, "delVIF: No VIF to remove, VIF #%d, %s (IP: %s)", 
             IfDp->vifindex, IfDp->Name, inetFmt(IfDp->InAdr.s_addr, s1) );
         return;
     }
@@ -126,12 +126,12 @@ void delVIF( struct IfDesc *IfDp ) {
     **  invalid pointer
     */
     if ( VifDp >= VCEP( VifDescVc ) ) {
-        my_log( LOG_ERR, EFAULT, "delVIF: Not a valid address for VIF: %d", IfDp->vifindex );
+        my_log( LOG_ERR, EFAULT, "delVIF: Not a valid address for VIF #%d", IfDp->vifindex );
     }
     
     VifCtl.vifc_vifi = IfDp->vifindex;
 
-    my_log( LOG_DEBUG, 0, "delVIF: Removing VIF (MRT_DEL_VIF), Ix %d Fl 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d", 
+    my_log( LOG_DEBUG, 0, "delVIF: Removing VIF (MRT_DEL_VIF), VIF #%d Flags 0x%x IP 0x%08x %s, Threshold: %d, Ratelimit: %d", 
          IfDp->vifindex, IfDp->Flags, IfDp->InAdr.s_addr, IfDp->Name, IfDp->threshold, IfDp->ratelimit);
 
     if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_DEL_VIF,
@@ -174,7 +174,7 @@ void addVIF( struct IfDesc *IfDp ) {
     /* no more space
      */
     if ( NULL == VifDp ) {
-        my_log( LOG_DEBUG, 0, "addVIF: No more VIFs! Could not add VIF, Ix %d, %s (IP: %s)", 
+        my_log( LOG_DEBUG, 0, "addVIF: No more VIFs! Could not add VIF #%d for %s (IP: %s)", 
             IfDp->vifindex, IfDp->Name, inetFmt(IfDp->InAdr.s_addr, s1) );
         my_log( LOG_ERR, ENOMEM, "addVIF: out of VIF space" );
     }
@@ -189,23 +189,29 @@ void addVIF( struct IfDesc *IfDp ) {
     VifCtl.vifc_lcl_addr.s_addr = IfDp->InAdr.s_addr;
     VifCtl.vifc_rmt_addr.s_addr = INADDR_ANY;
 
-    my_log( LOG_DEBUG, 0, "Adding VIF (MRT_ADD_VIF), Ix %d Fl 0x%x IP %15s %s, Threshold: %d, Ratelimit: %d", 
-         VifCtl.vifc_vifi, VifCtl.vifc_flags,  inetFmt(VifCtl.vifc_lcl_addr.s_addr, s1), IfDp->Name,
-         VifCtl.vifc_threshold, VifCtl.vifc_rate_limit);
+    my_log( LOG_DEBUG, 0, "Adding VIF (MRT_ADD_VIF), VIF #%d Flags 0x%x IP %15s %s, Threshold: %d, Ratelimit: %d", 
+            VifCtl.vifc_vifi,
+            VifCtl.vifc_flags,
+            inetFmt(VifCtl.vifc_lcl_addr.s_addr, s1),
+            IfDp->Name,
+            VifCtl.vifc_threshold, 
+            VifCtl.vifc_rate_limit
+    );
 
-    struct SubnetList *currSubnet;
-    for(currSubnet = IfDp->allowednets; currSubnet; currSubnet = currSubnet->next) {
+    struct SubnetList *allowednets = IfDp->allowednets;
+    while( allowednets ) {
         my_log(LOG_DEBUG, 0, "        Network for [%s] : %s",
             IfDp->Name,
-            inetFmts(currSubnet->subnet_addr, currSubnet->subnet_mask, s1)
+            inetFmts(allowednets->subnet_addr, allowednets->subnet_mask, s1)
         );
+        allowednets = allowednets->next;
     }
 
     if ( setsockopt( MRouterFD, IPPROTO_IP, MRT_ADD_VIF, 
                      (char *)&VifCtl, sizeof( VifCtl ) ) ) {
         my_log( LOG_ERR, errno, "MRT_ADD_VIF: [%s]·:·%s",
             IfDp->Name,
-            inetFmt(currSubnet->subnet_addr, s1)
+            inetFmt(IfDp->InAdr.s_addr, s1)
         );
     }
     
@@ -238,7 +244,7 @@ int addMRoute( struct MRouteDesc *Dp ) {
     {
         char FmtBuO[ 32 ], FmtBuM[ 32 ];
 
-        my_log( LOG_DEBUG, 0, "Adding MFC (MRT_ADD_MFC): %s -> %s, InpVIf: %d", 
+        my_log( LOG_DEBUG, 0, "Adding MFC (MRT_ADD_MFC): %s -> %s, InVIF #%d", 
              fmtInAdr( FmtBuO, CtlReq.mfcc_origin ), 
              fmtInAdr( FmtBuM, CtlReq.mfcc_mcastgrp ),
              (int)CtlReq.mfcc_parent
@@ -276,7 +282,7 @@ int delMRoute( struct MRouteDesc *Dp )
     {
         char FmtBuO[ 32 ], FmtBuM[ 32 ];
 
-        my_log( LOG_DEBUG, 0, "Removing MFC (MRT_DEL_MFC): %s -> %s, InpVIf: %d", 
+        my_log( LOG_DEBUG, 0, "Removing MFC (MRT_DEL_MFC): %s -> %s, InVIF #%d", 
              fmtInAdr( FmtBuO, CtlReq.mfcc_origin ), 
              fmtInAdr( FmtBuM, CtlReq.mfcc_mcastgrp ),
              (int)CtlReq.mfcc_parent
@@ -329,5 +335,3 @@ struct VifDesc *get_free_vif()
 
     return NULL;
 }
-
-

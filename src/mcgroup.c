@@ -53,15 +53,25 @@ static int joinleave( int Cmd, int UdpSock, struct IfDesc *IfDp, uint32_t mcasta
         my_log( LOG_NOTICE, 0, "%sMcGroup: %s on %s", CmdSt, 
             inetFmt( mcastaddr, s1 ), IfDp ? IfDp->Name : "<any>" );
     }
-
     if( setsockopt( UdpSock, IPPROTO_IP, 
           Cmd == 'j' ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, 
           (void *)&CtlReq, sizeof( CtlReq ) ) ) {
         my_log( LOG_WARNING, errno, "MRT_%s_MEMBERSHIP failed", Cmd == 'j' ? "ADD" : "DROP" );
         return 1;
     } else {
-        my_log( LOG_DEBUG, 0, "MRT_%s_MEMBERSHIP on Vif %d from %s", Cmd == 'j' ? "ADD" : "DROP",
+        my_log( LOG_DEBUG, 0, "MRT_%s_MEMBERSHIP on VIF #%d from %s", Cmd == 'j' ? "ADD" : "DROP",
             IfDp->vifindex, inetFmt(  IfDp->InAdr.s_addr, s1 ) );
+    }
+
+
+    /* setsockopt() causes IGMP_V2_MEMBERSHIPT_REPORT sent out of Upstream interface */
+    /* Send IGMP packet on upstream interface */
+    if( Cmd == 'j' ) {
+        sendIgmp(IfDp->InAdr.s_addr, mcastaddr, IGMP_V3_MEMBERSHIP_REPORT, 0, mcastaddr, 0);
+    }
+    else {
+        sendIgmp(IfDp->InAdr.s_addr, mcastaddr, IGMP_V2_LEAVE_GROUP, 0, mcastaddr, 0);
+        /* V3 leave will be sent inside sendIgmp() */
     }
 
     return 0;

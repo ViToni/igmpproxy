@@ -418,7 +418,7 @@ struct SubnetList *parseSubnetAddress(char *addrstr) {
     tmpSubnet->next = NULL;
 
     my_log(LOG_DEBUG, 0, "Config: IF: Altnet: Parsed altnet to %s.",
-            inetFmts(tmpSubnet->subnet_addr, tmpSubnet->subnet_mask,s1)
+            inetFmts(tmpSubnet->subnet_addr, tmpSubnet->subnet_mask, s1)
     );
 
     return tmpSubnet;
