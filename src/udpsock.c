@@ -31,36 +31,41 @@
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
 */
-/**
-*   udpsock.c contains function for creating a UDP socket.
-*
-*/
+
+/**---------------------------------------------------------------------------*
+**  udpsock.c
+**
+**  Contains function for creating a UDP socket.
+**
+**----------------------------------------------------------------------------*/
 
 #include "igmpproxy.h"
 
 /**
-*  Creates and connects a simple UDP socket to the target
-*  'PeerInAdr':'PeerPort'
-*
-*   @param PeerInAdr - The address to connect to
-*   @param PeerPort  - The port to connect to
-*
+**  Creates and connects a simple UDP socket to the target 'PeerInAdr':'PeerPort'
+**
+**  @param PeerInAdr - address to connect to
+**  @param PeerPort  - port to connect to
+**
 */
-int openUdpSocket( uint32_t PeerInAdr, uint16_t PeerPort ) {
+int openUdpSocket(uint32_t PeerInAdr, uint16_t PeerPort) {
     int Sock;
     struct sockaddr_in SockAdr;
 
-    if( (Sock = socket( AF_INET, SOCK_RAW, IPPROTO_IGMP )) < 0 )
-        my_log( LOG_ERR, errno, "UDP socket open" );
+    if ((Sock = socket(AF_INET, SOCK_RAW, IPPROTO_IGMP)) < 0) {
+        my_log(LOG_ERR, errno, "Failed to open UDP socket");
+    }
 
-    memset( &SockAdr, 0, sizeof( SockAdr ) );
-    SockAdr.sin_family      = AF_INET;
-    SockAdr.sin_port        = htons(PeerPort);
+    memset(&SockAdr, 0, sizeof(SockAdr));
+    SockAdr.sin_family = AF_INET;
+    SockAdr.sin_port = htons(PeerPort);
     SockAdr.sin_addr.s_addr = htonl(PeerInAdr);
 
-    if( bind( Sock, (struct sockaddr *)&SockAdr, sizeof( SockAdr ) ) )
-        my_log( LOG_ERR, errno, "UDP socket bind" );
+    if (bind(Sock, (struct sockaddr *)&SockAdr, sizeof(SockAdr))) {
+        my_log(LOG_ERR, errno, "Failed to bind UDP socket for: %s:%d",
+            inetFmt(PeerInAdr, s1),
+            PeerPort);
+    }
 
     return Sock;
 }
-

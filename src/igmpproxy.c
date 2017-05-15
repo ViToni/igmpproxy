@@ -31,60 +31,62 @@
 **  - Licensed under the 3-clause BSD license, see Stanford.txt file.
 **
 */
-/**
-*   igmpproxy.c - The main file for the IGMP proxy application.
-*
-*   February 2005 - Johnny Egeland
-*/
+
+/*----------------------------------------------------------------------------*
+**  igmpproxy.c
+**
+**  The main file for the IGMP proxy application.
+**
+**  February 2005 - Johnny Egeland
+**----------------------------------------------------------------------------*/
 
 #include "igmpproxy.h"
 
 static const char Usage[] =
-"Usage: igmpproxy [-h] [-d] [-v [-v]] <configfile>\n"
-"\n"
-"   -h   Display this help screen\n"
-"   -d   Run in debug mode. Output all messages on stderr\n"
-"   -v   Be verbose. Give twice to see even debug messages.\n"
-"\n"
-PACKAGE_STRING "\n"
-;
+        "Usage: igmpproxy [-h] [-d] [-v [-v]] <configfile>\n"
+        "\n"
+        "   -h   Display this help screen\n"
+        "   -d   Run in debug mode. Output all messages on stderr\n"
+        "   -v   Be verbose. Give twice to see even debug messages.\n"
+        "\n" PACKAGE_STRING "\n";
 
 // Local function Prototypes
 static void signalHandler(int);
-int     igmpProxyInit(void);
-void    igmpProxyCleanUp(void);
-void    igmpProxyRun(void);
+int igmpProxyInit(void);
+void igmpProxyCleanUp(void);
+void igmpProxyRun(void);
 
 // Global vars...
 static int sighandled = 0;
-#define GOT_SIGINT  0x01
-#define GOT_SIGHUP  0x02
+#define GOT_SIGINT 0x01
+#define GOT_SIGHUP 0x02
 #define GOT_SIGUSR1 0x04
 #define GOT_SIGUSR2 0x08
 
 // Holds the indeces of the upstream IF...
-int     upStreamIfIdx[MAX_UPS_VIFS];
+int upStreamIfIdx[MAX_UPS_VIFS];
 
 /**
-*   Program main method. Is invoked when the program is started
-*   on commandline. The number of commandline arguments, and a
-*   pointer to the arguments are received on the line...
+**  Program main method. Is invoked when the program is started
+**  on commandline. The number of commandline arguments, and a
+**  pointer to the arguments are received on the line.
 */
-int main( int ArgCn, char *ArgVc[] ) {
+int main(int ArgCn, char *ArgVc[]) {
 
     int c;
 
-    // Parse the commandline options and setup basic settings..
+    // parse the commandline options and setup basic settings
     while ((c = getopt(ArgCn, ArgVc, "vdh")) != -1) {
         switch (c) {
         case 'd':
             Log2Stderr = true;
             break;
         case 'v':
-            if (LogLevel == LOG_INFO)
+            if (LogLevel == LOG_INFO) {
                 LogLevel = LOG_DEBUG;
-            else
+            } else {
                 LogLevel = LOG_INFO;
+            }
             break;
         case 'h':
             fputs(Usage, stderr);
@@ -104,50 +106,50 @@ int main( int ArgCn, char *ArgVc[] ) {
 
     // Chech that we are root
     if (geteuid() != 0) {
-       fprintf(stderr, "igmpproxy: must be root\n");
-       exit(1);
+        fprintf(stderr, "igmpproxy: must be root\n");
+        exit(1);
     }
 
     openlog("igmpproxy", LOG_PID, LOG_USER);
 
     // Write debug notice with file path...
-    my_log(LOG_DEBUG, 0, "Searching for config file at '%s'" , configFilePath);
+    my_log(LOG_DEBUG, 0, "Searching for config file at '%s'", configFilePath);
 
     do {
 
         // Loads the config file...
-        if( ! loadConfig( configFilePath ) ) {
+        if (!loadConfig(configFilePath)) {
             my_log(LOG_ERR, 0, "Unable to load config file...");
             break;
         }
 
         // Initializes the deamon.
-        if ( !igmpProxyInit() ) {
+        if (!igmpProxyInit()) {
             my_log(LOG_ERR, 0, "Unable to initialize IGMPproxy.");
             break;
         }
 
-        if ( !Log2Stderr ) {
+        if (!Log2Stderr) {
 
-            // Only daemon goes past this line...
-            if (fork()) exit(0);
+            // only daemon goes past this line...
+            if (fork()) {
+                exit(0);
+            }
 
-            // Detach daemon from terminal
-            if ( close( 0 ) < 0 || close( 1 ) < 0 || close( 2 ) < 0
-                || open( "/dev/null", 0 ) != 0 || dup2( 0, 1 ) < 0 || dup2( 0, 2 ) < 0
-                || setpgid( 0, 0 ) < 0
-            ) {
-                my_log( LOG_ERR, errno, "failed to detach daemon" );
+            // detach daemon from terminal
+            if (close(0) < 0 || close(1) < 0 || close(2) < 0 || open("/dev/null", 0) != 0 || dup2(0, 1) < 0 ||
+                dup2(0, 2) < 0 || setpgid(0, 0) < 0) {
+                my_log(LOG_ERR, errno, "failed to detach daemon");
             }
         }
 
-        // Go to the main loop.
+        // go to the main loop
         igmpProxyRun();
 
-        // Clean up
+        // clean up
         igmpProxyCleanUp();
 
-    } while ( false );
+    } while (false);
 
     // Inform that we are exiting.
     my_log(LOG_INFO, 0, "Shutdown complete....");
@@ -156,118 +158,124 @@ int main( int ArgCn, char *ArgVc[] ) {
 }
 
 /**
-*   Handles the initial startup of the daemon.
+**  Handles the initial startup of the daemon.
 */
 int igmpProxyInit(void) {
     struct sigaction sa;
     int Err;
 
     sa.sa_handler = signalHandler;
-    sa.sa_flags = 0;    /* Interrupt system calls */
+    sa.sa_flags = 0; /* Interrupt system calls */
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
 
-    // Loads configuration for Physical interfaces...
+    // load configuration for physical interfaces...
     buildIfVc();
 
-    // Configures IF states and settings
+    // configures IF states and settings
     configureVifs();
 
-    switch ( Err = enableMRouter() ) {
-    case 0: break;
-    case EADDRINUSE: my_log( LOG_ERR, EADDRINUSE, "MC-Router API already in use" ); break;
-    default: my_log( LOG_ERR, Err, "MRT_INIT failed" );
+    switch (Err = enableMRouter()) {
+    case 0:
+        break;
+    case EADDRINUSE:
+        my_log(LOG_ERR, EADDRINUSE, "MC-Router API already in use");
+        break;
+    default:
+        my_log(LOG_ERR, Err, "MRT_INIT failed");
     }
 
-    /* create VIFs for all IP, non-loop interfaces
-     */
+    // create VIFs for all IP, non-loop interfaces
     {
         unsigned Ix;
         struct IfDesc *Dp;
-        int     vifcount = 0, upsvifcount = 0;
+        int vifcount = 0, upsvifcount = 0;
 
         // init array to "not set"
-        for ( Ix = 0; Ix < MAX_UPS_VIFS; Ix++)
-        {
+        for (Ix = 0; Ix < MAX_UPS_VIFS; Ix++) {
             upStreamIfIdx[Ix] = -1;
         }
 
-        for ( Ix = 0; (Dp = getIfByIx(Ix)); Ix++ ) {
+        for (Ix = 0; (Dp = getIfByIx(Ix)); Ix++) {
 
-            if ( Dp->InAdr.s_addr && ! (Dp->Flags & IFF_LOOPBACK) ) {
-                if(Dp->state == IF_STATE_UPSTREAM) {
-                    if (upsvifcount < MAX_UPS_VIFS -1)
-                    {
-                        my_log(LOG_DEBUG, 0, "Found upstrem IF #%d, will assing as upstream Vif %d",
-                            upsvifcount, Ix);
+            if (Dp->InAdr.s_addr && !(Dp->Flags & IFF_LOOPBACK)) {
+                if (Dp->state == IF_STATE_UPSTREAM) {
+                    if (upsvifcount < MAX_UPS_VIFS - 1) {
+                        my_log(LOG_DEBUG, 0, "Found upstrem IF #%d, will assing as upstream Vif %d", upsvifcount, Ix);
                         upStreamIfIdx[upsvifcount++] = Ix;
                     } else {
-                        my_log(LOG_ERR, 0, "Cannot set VIF #%d as upstream as well. Mac upstream Vif count is %d",
-                            Ix, MAX_UPS_VIFS);
+                        my_log(LOG_ERR, 0,
+                               "Cannot set VIF #%d as upstream as well. Mac "
+                               "upstream Vif count is %d",
+                               Ix, MAX_UPS_VIFS);
                     }
                 }
 
                 if (Dp->state != IF_STATE_DISABLED) {
-                    addVIF( Dp );
+                    addVIF(Dp);
                     vifcount++;
                 }
             }
         }
 
-        if(0 == upsvifcount) {
+        if (0 == upsvifcount) {
             my_log(LOG_ERR, 0, "There must be at least 1 Vif as upstream.");
         }
     }
 
-    // Initialize IGMP
+    // initialize IGMP
     initIgmp();
-    // Initialize Routing table
+
+    // initialize routing table
     initRouteTable();
-    // Initialize timer
+
+    // initialize timer
     callout_init();
 
     return 1;
 }
 
 /**
-*   Clean up all on exit...
+** Cleans up all on exit.
 */
 void igmpProxyCleanUp(void) {
-    my_log( LOG_DEBUG, 0, "clean handler called" );
+    my_log(LOG_DEBUG, 0, "clean handler called");
 
-    free_all_callouts();    // No more timeouts.
-    clearAllRoutes();       // Remove all routes.
-    disableMRouter();       // Disable the multirout API
+    free_all_callouts(); // no more timeouts
+    clearAllRoutes();    // remove all routes
+    disableMRouter();    // disable the multiroute API
 }
 
 /**
-*   Main daemon loop.
+** Main daemon loop.
 */
 void igmpProxyRun(void) {
-    // Get the config.
+    // get the config
     struct Config *config = getCommonConfig();
-    // Set some needed values.
-    register int recvlen;
-    int     MaxFD, Rt, secs;
-    fd_set  ReadFDS;
-    socklen_t dummy = 0;
-    struct  timespec  curtime, lasttime, difftime, tv;
-    // The timeout is a pointer in order to set it to NULL if nessecary.
-    struct  timespec  *timeout = &tv;
 
-    // Initialize timer vars
+    // set some needed values
+    register int recvlen;
+    int MaxFD, Rt, secs;
+    fd_set ReadFDS;
+    socklen_t dummy = 0;
+    struct timespec curtime, lasttime, difftime, tv;
+
+    // The timeout is a pointer in order to set it to NULL if nessecary.
+    struct timespec *timeout = &tv;
+
+    // initialize timer vars
     difftime.tv_nsec = 0;
     clock_gettime(CLOCK_MONOTONIC, &curtime);
     lasttime = curtime;
 
-    // First thing we send a membership query in downstream VIF's...
+    // first thing we send a membership query in downstream VIFs
     sendGeneralMembershipQuery();
 
-    // Loop until the end...
+    // loop until the end
     for (;;) {
 
-        // Process signaling...
+        // process signaling...
         if (sighandled) {
             if (sighandled & GOT_SIGINT) {
                 sighandled &= ~GOT_SIGINT;
@@ -276,42 +284,43 @@ void igmpProxyRun(void) {
             }
         }
 
-        /* aimwang: call rebuildIfVc */
-        if (config->rescanVif)
+        // aimwang: call rebuildIfVc
+        if (config->rescanVif) {
             rebuildIfVc();
+        }
 
-        // Prepare timeout...
+        // prepare timeout
         secs = timer_nextTimer();
-        if(secs == -1) {
+        if (secs == -1) {
             timeout = NULL;
         } else {
             timeout->tv_nsec = 0;
             timeout->tv_sec = (secs > 3) ? 3 : secs; // aimwang: set max timeout
         }
 
-        // Prepare for select.
+        // prepare for select
         MaxFD = MRouterFD;
 
-        FD_ZERO( &ReadFDS );
-        FD_SET( MRouterFD, &ReadFDS );
+        FD_ZERO(&ReadFDS);
+        FD_SET(MRouterFD, &ReadFDS);
 
         // wait for input
-        Rt = pselect( MaxFD +1, &ReadFDS, NULL, NULL, timeout, NULL );
+        Rt = pselect(MaxFD + 1, &ReadFDS, NULL, NULL, timeout, NULL);
 
         // log and ignore failures
-        if( Rt < 0 ) {
-            my_log( LOG_WARNING, errno, "select() failure" );
+        if (Rt < 0) {
+            my_log(LOG_WARNING, errno, "select() failure");
             continue;
-        }
-        else if( Rt > 0 ) {
+        } else if (Rt > 0) {
 
-            // Read IGMP request, and handle it...
-            if( FD_ISSET( MRouterFD, &ReadFDS ) ) {
+            // read IGMP request, and handle it...
+            if (FD_ISSET(MRouterFD, &ReadFDS)) {
 
-                recvlen = recvfrom(MRouterFD, recv_buf, RECV_BUF_SIZE,
-                                   0, NULL, &dummy);
+                recvlen = recvfrom(MRouterFD, recv_buf, RECV_BUF_SIZE, 0, NULL, &dummy);
                 if (recvlen < 0) {
-                    if (errno != EINTR) my_log(LOG_ERR, errno, "recvfrom");
+                    if (errno != EINTR) {
+                        my_log(LOG_ERR, errno, "recvfrom");
+                    }
                     continue;
                 }
 
@@ -319,7 +328,7 @@ void igmpProxyRun(void) {
             }
         }
 
-        // At this point, we can handle timeouts...
+        // at this point, we can handle timeouts
         do {
             /*
              * If the select timed out, then there's no other
@@ -344,19 +353,18 @@ void igmpProxyRun(void) {
                 difftime.tv_nsec += 1000000000;
             }
             lasttime = curtime;
-            if (secs == 0 || difftime.tv_sec > 0)
+            if (secs == 0 || difftime.tv_sec > 0) {
                 age_callout_queue(difftime.tv_sec);
+            }
             secs = -1;
         } while (difftime.tv_sec > 0);
-
     }
-
 }
 
-/*
- * Signal handler.  Take note of the fact that the signal arrived
- * so that the main loop can take care of it.
- */
+/**
+**  Signal handler. Take note of the fact that the signal arrived
+**  so that the main loop can take care of it.
+*/
 static void signalHandler(int sig) {
     switch (sig) {
     case SIGINT:

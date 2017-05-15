@@ -32,32 +32,44 @@
 **
 */
 
+/**---------------------------------------------------------------------------*
+**  syslog.c
+**
+**  Contains function for logging to stderr or syslog..
+**
+**----------------------------------------------------------------------------*/
+
 #include "igmpproxy.h"
 
 int LogLevel = LOG_WARNING;
 bool Log2Stderr = false;
 
-void my_log( int Severity, int Errno, const char *FmtSt, ... )
-{
-    char LogMsg[ 128 ];
+/**
+** Logs messages and their severity.
+** Logging happens either to 'stderr' or 'syslog'.
+** If the `Severity` is ERROR or worse, the program exits.
+*/
+void my_log(int Severity, int Errno, const char *FmtSt, ...) {
+    char LogMsg[128];
 
     va_list ArgPt;
     unsigned Ln;
-    va_start( ArgPt, FmtSt );
-    Ln = vsnprintf( LogMsg, sizeof( LogMsg ), FmtSt, ArgPt );
-    if( Errno > 0 )
-        snprintf( LogMsg + Ln, sizeof( LogMsg ) - Ln,
-                "; Errno(%d): %s", Errno, strerror(Errno) );
-    va_end( ArgPt );
+    va_start(ArgPt, FmtSt);
+    Ln = vsnprintf(LogMsg, sizeof(LogMsg), FmtSt, ArgPt);
+    if (Errno > 0) {
+        snprintf(LogMsg + Ln, sizeof(LogMsg) - Ln, "; Errno(%d): %s", Errno, strerror(Errno));
+    }
+    va_end(ArgPt);
 
     if (Severity <= LogLevel) {
-        if (Log2Stderr)
+        if (Log2Stderr) {
             fprintf(stderr, "%s\n", LogMsg);
-        else {
+        } else {
             syslog(Severity, "%s", LogMsg);
         }
     }
 
-    if( Severity <= LOG_ERR )
-        exit( -1 );
+    if (Severity <= LOG_ERR) {
+        exit(-1);
+    }
 }
